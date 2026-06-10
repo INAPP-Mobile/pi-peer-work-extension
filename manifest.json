@@ -1,0 +1,6 @@
+{
+  "name": "pworkflow",
+  "version": "1.0.0",
+  "description": "Peer workflow — async build/release pipeline between dev and qa",
+  "entry": "index.ts"
+}

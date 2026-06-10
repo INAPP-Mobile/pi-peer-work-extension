@@ -1,0 +1,41 @@
+{
+  "name": "@earendil-works/pi-peer-workflow",
+  "version": "1.0.0",
+  "description": "Peer-to-peer async workflow pipeline (build → qa → release) for pi agent",
+  "keywords": [
+    "pi-package",
+    "extension",
+    "workflow",
+    "pipeline"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "lib",
+    "manifest.json",
+    "prompts"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/INAPP-Mobile/pi-peer-work-extension.git"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "dependencies": {
+    "async-mutex": "^0.5.0",
+    "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2"
+  }
+}
