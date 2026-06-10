@@ -1,2 +1,49 @@
 node_modules/
 package-lock.json
+
+# Dependencies (optional: keep if using pnpm/yarn)
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.lerna/
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Build outputs
+lib/
+dist/
+out/
+build/
+*.tsbuildinfo
+
+# Testing
+coverage/
+.nyc_output/
+test-results.xml
+
+# TypeScript
+**/*.tsbuildinfo
+
+# Extension specific
+.pworkflow/debug.log
+.cowork/debug.log
