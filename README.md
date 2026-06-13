@@ -23,6 +23,7 @@ Each step is determined by **scoring thresholds**, not manual tags.scores determ
 - **State persistence**: Maintains workflow state in `.pworkflow/state.json`
 - **Task files**: Automatic task generation for each role's turn
 - **Telegram notifications**: Escalation support via Telegram
+- **Context compaction**: `/compact` command to summarize old messages when context grows large
 
 ## Installation
 
@@ -69,6 +70,12 @@ Or use the agent command to set it per-session.
 ```
 
 Shows current phase, step, and workflow state.
+
+## Context Compaction
+
+When the conversation grows too long for context window, use `/compact <instructions>` to summarize older messages while preserving recent work. Your extension's `/pworkflow-compact` tool wraps this with role-specific follow-up messages after compaction.
+
+Pi also auto-compacts when context exceeds threshold (configurable in `~/.pi/agent/settings.json`).
 
 ## Workflow Steps
 
