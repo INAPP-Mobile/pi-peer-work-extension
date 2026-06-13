@@ -29,8 +29,5 @@ export function parseScores(text: string): ScoreResult {
     result.qaScore = parseInt(qaMatch[1], 10);
   }
 
-  // Return null only if no scores found (nothing useful in message)
-  if (!devMatch && !qaMatch) return null;
-
   return result;
 }

@@ -58,7 +58,10 @@ export function registerTools(pi: ExtensionAPI): void {
 
           ctx.ui.setFooter(buildFooter(ctx, () => state?.role ?? null));
           writeState(state);
-          pi.sendUserMessage(buildQaMessage(), { deliverAs: "followUp" });
+          pi.sendUserMessage(
+            state.role === "dev" ? buildDevMessage() : buildQaMessage(),
+            { deliverAs: "followUp" },
+          );
         },
         onError: (error) => {
           pi.sendUserMessage("compaction error report to human", {

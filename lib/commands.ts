@@ -13,7 +13,13 @@ import {
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { initState, resetState, WorkflowState, readState, getRoleModel } from "./workflow";
+import {
+  initState,
+  resetState,
+  WorkflowState,
+  readState,
+  getRoleModel,
+} from "./workflow";
 import { debugLog } from "./logger";
 import { buildDevTask, buildQaMessage } from "./tasks";
 
@@ -36,13 +42,7 @@ export function handleInit(ctx: any): void {
   // Remove all stale workflow files
   const pwDir = join(process.cwd(), ".pworkflow");
   if (existsSync(pwDir)) {
-    const staleFiles = [
-      "output-dev.txt",
-      "output-qa.txt",
-      "task-dev.json",
-      "task-qa.json",
-      "git-init.log",
-    ];
+    const staleFiles = ["task-dev.json", "task-qa.json", "git-init.log"];
     for (const f of staleFiles) {
       const fp = join(pwDir, f);
       if (existsSync(fp)) unlinkSync(fp);
@@ -68,10 +68,7 @@ export function handleInit(ctx: any): void {
 export function handleStatus(ctx: any): void {
   const state = readState();
   if (!state) {
-    ctx.ui.notify(
-      "No active workflow. Run /pworkflow-init first.",
-      "warning",
-    );
+    ctx.ui.notify("No active workflow. Run /pworkflow-init first.", "warning");
     return;
   }
   // Import helper functions from workflow.ts dynamically
