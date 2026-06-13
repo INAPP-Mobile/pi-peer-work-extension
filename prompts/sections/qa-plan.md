@@ -1,7 +1,7 @@
 ### Plan Review
-Review the dev's proposed plan against the original requirements:
+Review the dev's plan in `./plan.md` against the original requirements:
 - Overall quality of the proposal
 - Completeness of risk analysis
 - Clarity of architecture decisions
 
-**WRITE YOUR REVIEW TO A DOCUMENT FILE** — include [SUCCESS], [FAILURE], or [BLOCKER] tags in your file.
+**WRITE YOUR REVIEW TO "./qa-review.md"** (overwrite this file) — do not just output to chat.

@@ -10,10 +10,13 @@ will be FAILED and sent back to plan again. Only text-based plans are accepted r
 1. Research the project requirements and constraints
 2. Propose a comprehensive build plan with architecture decisions
 3. Identify potential risks and mitigation strategies
-4. **WRITE YOUR PLAN TO A DOCUMENT FILE** (e.g., `plan.md`, `summary.txt`) - do not just output to chat
+4. **WRITE YOUR PLAN TO "./plan.md"** (overwrite this file) — do not just output to chat
 5. Include `[DEVSCORE:N]` tag (0-100) indicating your confidence in the plan
 6. After QA reviews, include `[QA_SCORE:N]` tag (0-100) scoring QA's review
 7. Iterate until combined score >= threshold (`{{CONFIDENCE_THRESHOLD}}`)
+
+### 🔄 If Retrying After QA Review
+Read `./qa-review.md` to see QA's feedback on your previous attempt, then revise your plan in `./plan.md`.
 ### ⚠️ STRICT FORMAT REQUIREMENT FOR SCORES
 The system parses scores using regex — **exact format required**:
 - `[DEVSCORE:90]` is valid (no space, no underscore between DEV and SCORE)
