@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { debugLog } from "./logger";
 
 export type Phase = "build" | "release" | "plan" | "divide";
 export type PlanPhaseMode = "initial" | "iteration" | "done";
@@ -48,6 +49,8 @@ export interface WorkflowState {
   qaTaskFile: string;
   confidenceThreshold: number; // min sum (devScore + qaScore, max 200) to advance. Defaults to DEFAULT_CONFIDENCE_THRESHOLD
   roundsToAdvance: number; // remaining rounds until forced advance, default 10
+  currentSubtaskIndex?: number; // for build phase: which subtask we're on (0-based)
+  subtasksCompleted?: number[]; // list of completed subtask indices
   roleModels?: {
     dev?: string; // model ID for dev role (e.g. "anthropic/claude-sonnet-4-5")
     qa?: string; // model ID for QA role
@@ -413,16 +416,19 @@ export function writeQaOutput(status: string, body: string): void {
 // ─── Advance / Fallback / Escalate ──────────────────────────────────────
 
 export function advancePhase(state: WorkflowState): WorkflowState | null {
+  debugLog("### advancePhase", state);
   const currentPhase = state.phase;
   if (state.stepIndex + 1 < WORKFLOW_PHASES.length) {
-    const newPhase = WORKFLOW_PHASES[state.stepIndex].phase;
+    var newPhase = WORKFLOW_PHASES[state.stepIndex].phase;
     while (newPhase === currentPhase) {
       state.stepIndex++;
+      newPhase = WORKFLOW_PHASES[state.stepIndex].phase;
     }
     state.phase = newPhase;
     state.status = "in_progress";
     state.roundsToAdvance = DEFAULT_ROUND_TO_ADVANCE;
     state.role = "dev";
+    writeState(state);
   } else {
     return null;
   }
@@ -519,12 +525,6 @@ export function failBackToDev(
     console.log(
       `[pworkflow] max iterations (${prevToAdvance}) reached after QA failure, pushing back to dev`,
     );
-    const phaseSteps = WORKFLOW_PHASES.filter((s) => s.phase === state.phase);
-    const devSteps = phaseSteps.filter((s) => s.role === "dev");
-    if (devSteps.length > 0) {
-      const lastDevStep = devSteps[devSteps.length - 1];
-      state.stepIndex = WORKFLOW_PHASES.indexOf(lastDevStep);
-    }
     state.role = "dev";
     state.status = "in_progress";
     writeState(state);
@@ -534,13 +534,7 @@ export function failBackToDev(
   (state as any).roundsToAdvance = newToAdvance;
   state.context.notes = `${state.context.notes || ""}\n[Round ${prevToAdvance}/${10}: confidence sum ${scoreSum} < threshold ${threshold}, QA pushed back]`;
 
-  // Push back to dev — find the last dev step in this phase
-  const phaseSteps = WORKFLOW_PHASES.filter((s) => s.phase === state.phase);
-  const devSteps = phaseSteps.filter((s) => s.role === "dev");
-  if (devSteps.length > 0) {
-    const lastDevStep = devSteps[devSteps.length - 1];
-    state.stepIndex = WORKFLOW_PHASES.indexOf(lastDevStep);
-  }
+  // Push back to dev — reset step index to start of phase and set role to dev
   state.role = "dev";
   state.status = "in_progress";
   writeState(state);
@@ -597,6 +591,106 @@ export function markPlanPhaseComplete(state: WorkflowState): WorkflowState {
   return state;
 }
 
+/**
+ * For build phase with subtasks: load task order from .pworkflow/task-order.json.
+ * Returns array of subtask filenames in execution order, or null if not available.
+ */
+export function getSubtaskOrder(): string[] | null {
+  const path = join(PW_DIR(), "task-order.json");
+  if (!existsSync(path)) return null;
+  try {
+    const data = readFileSync(path, "utf-8");
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get the current subtask filename for build phase.
+ */
+export function getCurrentSubtask(state: WorkflowState): string | null {
+  const order = getSubtaskOrder();
+  if (!order) return null;
+  
+  const currentIndex = state.currentSubtaskIndex ?? 0;
+  if (currentIndex >= order.length) return null;
+  
+  return order[currentIndex];
+}
+
+/**
+ * Mark current subtask as complete and advance to next subtask in build phase.
+ * Returns true if there are more subtasks, false if all done.
+ */
+export function advanceSubtask(state: WorkflowState): boolean {
+  if (state.phase !== "build") return false;
+  
+  const order = getSubtaskOrder();
+  if (!order) return false;
+  
+  // Track completion
+  if (!state.subtasksCompleted) state.subtasksCompleted = [];
+  state.subtasksCompleted.push(state.currentSubtaskIndex ?? 0);
+  
+  // Advance to next subtask
+  let newIndex = (state.currentSubtaskIndex ?? 0) + 1;
+  
+  if (newIndex >= order.length) {
+    // All subtasks complete - advance to release phase
+    state.phase = "release";
+    state.stepIndex = WORKFLOW_PHASES.findIndex(p => p.phase === "release");
+    state.currentSubtaskIndex = undefined;
+    writeState(state);
+    return false; // no more subtasks in build
+  }
+  
+  state.currentSubtaskIndex = newIndex;
+  state.role = "dev";
+  writeState(state);
+  return true; // more subtasks to do
+}
+
+/**
+ * Reset subtask tracking for new build phase (when entering build from divide).
+ */
+export function resetBuildTracking(state: WorkflowState): void {
+  const order = getSubtaskOrder();
+  if (!order || order.length === 0) return;
+  
+  state.currentSubtaskIndex = 0;
+  state.subtasksCompleted = [];
+  writeState(state);
+}
+
 export function PW_DIR(): string {
   return join(process.cwd(), ".pworkflow");
+}
+
+/**
+ * Get total number of subtasks and completed count from workflow state.
+ */
+export function getSubtaskProgress(state: WorkflowState): { total: number; completed: number } {
+  const order = getSubtaskOrder();
+  if (!order) return { total: 0, completed: 0 };
+  
+  const completed = state.subtasksCompleted?.length ?? 0;
+  const current = state.currentSubtaskIndex ?? 0;
+  // Include the current subtask as in-progress
+  const total = order.length;
+  return { total, completed: Math.min(completed + (current > 0 ? 1 : 0), total) };
+}
+
+/** Sync the mtime of a task file to prevent re-firing pollers. */
+export function syncTaskFileMtime(role: "dev" | "qa"): void {
+  const taskFile = role === "qa" ? "task-qa.json" : "task-dev.json";
+  const taskPath = join(PW_DIR(), taskFile);
+  try {
+    if (existsSync(taskPath)) {
+      const st = statSync(taskPath);
+      // Re-write file to update mtime
+      const data = readFileSync(taskPath);
+      writeFileSync(taskPath, data);
+    }
+  } catch {}
 }
