@@ -10,7 +10,7 @@ export type ScoreResult = {
   qaScore?: number;
 };
 
-export function parseScores(text: string): ScoreResult | null {
+export function parseScores(text: string): ScoreResult {
   const result: ScoreResult = {
     devScore: undefined,
     qaScore: undefined,

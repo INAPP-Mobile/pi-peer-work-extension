@@ -14,7 +14,7 @@ import { readState } from "./workflow";
 export function initCompact(pi: ExtensionAPI): void {
   pi.on("session_before_compact", async (event, ctx) => {
     const state = readState();
-    
+
     // If no workflow state or goal, skip compaction preparation
     if (!state || !state.context?.humanGoal) {
       debugLog("[compact] no workflow goal; skipping compact preparation");
@@ -22,10 +22,8 @@ export function initCompact(pi: ExtensionAPI): void {
     }
 
     const summary = `Workflow continuation:
-Role: ${state.role}
 Phase: ${state.phase}
-Goal: ${state.context.humanGoal.substring(0, 200)}
-Threshold: ${state.confidenceThreshold || 180}`;
+Goal: ${state.context.humanGoal.substring(0, 200)}`;
 
     debugLog("[compact] creating workflow summary", summary);
 
@@ -34,7 +32,7 @@ Threshold: ${state.confidenceThreshold || 180}`;
         summary,
         firstKeptEntryId: event.preparation.firstKeptEntryId,
         tokensBefore: event.preparation.tokensBefore,
-      }
+      },
     };
   });
 }

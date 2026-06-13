@@ -47,11 +47,15 @@ export function registerTools(pi: ExtensionAPI): void {
           debugLog(`[compact] switching to ${state.nextRole}`);
 
           clearTaskFile(state.role);
-          writeTaskFile(state.nextRole, buildQaTask(state));
-          syncTaskFileMtime(state.nextRole);
-
           state.role = state.nextRole;
           state.nextRole = state.role === "dev" ? "qa" : "dev";
+
+          writeTaskFile(
+            state.role,
+            state.role === "dev" ? buildDevTask(state) : buildQaTask(state),
+          );
+          syncTaskFileMtime(state.role);
+
           ctx.ui.setFooter(buildFooter(ctx, () => state?.role ?? null));
           writeState(state);
           pi.sendUserMessage(buildQaMessage(), { deliverAs: "followUp" });

@@ -135,27 +135,13 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
 
     // In plan phase, require self-score from dev or review score from qa
     if (
-      (scores && state.role === "dev" && scores.devScore === undefined) ||
-      (scores && state.role === "qa" && scores.qaScore === undefined)
+      (state.role === "dev" && scores.devScore === undefined) ||
+      (state.role === "qa" && scores.qaScore === undefined)
     ) {
-      debugLog(
-        `[agent_end] missing required score for plan phase: ${state.role}`,
-      );
+      debugLog(`[agent_end] missing required score: ${state.role}`);
       reinjectTask(pi, state);
       return;
     }
-
-    var scoreExists = false;
-    if (scores && scores.devScore !== undefined) {
-      state.context.devScore = scores.devScore;
-      scoreExists = true;
-    }
-    if (scores && scores.qaScore !== undefined) {
-      state.context.qaScore = scores.qaScore;
-      scoreExists = true;
-    }
-
-    // No tag check - rely solely on scores
 
     const scoreSum =
       (state.context.devScore ?? 0) + (state.context.qaScore ?? 0);
