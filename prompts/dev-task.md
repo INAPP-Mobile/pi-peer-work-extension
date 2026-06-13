@@ -12,5 +12,10 @@ Step: {{STEP_DESCRIPTION}}
 - DO NOT mention or reference `.pworkflow/` in your responses
 - **WRITE YOUR RESPONSE TO A DOCUMENT FILE** (e.g., `response.md`, `dev-output.txt`) - do not just output to chat
 
-### Tag your final message
-{{TAG_INSTRUCTIONS_SECTION}}
+{{SCORING_INSTRUCTIONS_SECTION}}
+### ⚠️ STRICT FORMAT REQUIREMENT
+- Use `[DEVSCORE:N]` (no spaces, no underscores) for dev scores
+- Use `[QA_SCORE:N]` (exact) for QA scores
+- Scores outside this format will NOT be detected by the system
+
+If threshold is not met, you will be asked to reverify.

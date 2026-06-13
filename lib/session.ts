@@ -92,6 +92,10 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
     debugLog("[message_end] last Msg", lastMsg);
     var scoreExists = false;
     const scores = parseScores(lastMsg);
+
+    // Store last message for error reporting
+    state.context.lastAgentMessage = lastMsg.substring(0, 200) + (lastMsg.length > 200 ? "..." : "");
+
     if (scores && scores.devScore !== undefined) {
       state.context.devScore = scores.devScore;
       scoreExists = true;
@@ -127,12 +131,17 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
     debugLog(`[agent_end] turn_end: state.role=${state.role}`);
 
     const scores = parseScores(lastMsg);
-    if (
-      (scores && state.role === "dev" && scores.devScore === undefined) ||
-      (scores && state.role === "qa" && scores.qaScore === undefined)
-    ) {
-      reinjectTask(pi, state);
-      return;
+
+    // In plan phase, require self-score from dev or review score from qa
+    if (state.phase === "plan") {
+      if (
+        (scores && state.role === "dev" && scores.devScore === undefined) ||
+        (scores && state.role === "qa" && scores.qaScore === undefined)
+      ) {
+        debugLog(`[agent_end] missing required score for plan phase: ${state.role}`);
+        reinjectTask(pi, state);
+        return;
+      }
     }
 
     var scoreExists = false;
@@ -144,12 +153,8 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
       state.context.qaScore = scores.qaScore;
       scoreExists = true;
     }
-    if (scoreExists) {
-      debugLog("[agent_end] Score found in message", scores);
-      writeState(state);
-    } else {
-      debugLog("[agent_end] No score found in message", scores);
-    }
+
+    // No tag check - rely solely on scores
 
     const scoreSum =
       (state.context.devScore ?? 0) + (state.context.qaScore ?? 0);
@@ -161,7 +166,9 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
         const currentIdx = state.currentSubtaskIndex ?? 0;
 
         if (currentIdx + 1 < allSubtasks.length) {
-          debugLog(`[agent_end] build subtask ${currentIdx} complete, advancing to next`);
+          debugLog(
+            `[agent_end] build subtask ${currentIdx} complete, advancing to next`,
+          );
           state.context.devScore = 0;
           state.context.qaScore = 0;
 
@@ -173,15 +180,22 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
               `[pworkflow] subtask ${currentIdx} complete. Moving to subtask ${currentIdx + 1}.`,
               "info",
             );
-            pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
+            pi.sendUserMessage("run pworkflow-compact", {
+              deliverAs: "followUp",
+            });
           }
           writeState(state);
           return;
         } else {
-          debugLog(`[agent_end] all build subtasks complete, advancing to release`);
+          debugLog(
+            `[agent_end] all build subtasks complete, advancing to release`,
+          );
           const newState = advancePhase(state);
           if (!newState) {
-            ctx.ui.notify(`✅ [pworkflow] goal completed successfully!!`, "info");
+            ctx.ui.notify(
+              `✅ [pworkflow] goal completed successfully!!`,
+              "info",
+            );
             markCompleted(state);
             return;
           }
@@ -212,7 +226,9 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
       writeTaskFile("dev", buildTask);
       syncTaskFileMtime("dev");
       state.role = "dev";
+      debugLog(`[agent_end] 11 switching to dev role`);
       ctx.ui.setFooter(buildFooter(ctx, () => "dev"));
+      writeState(state);
       pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
       return;
     } else {
@@ -231,7 +247,7 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
       ctx.ui.setFooter(buildFooter(ctx, () => "qa"));
       writeState(state);
 
-      debugLog("after agent end: switching to qa");
+      debugLog("[agent end]: switching to qa");
       pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
     } else if (state.role === "qa") {
       clearTaskFile("qa");
@@ -239,10 +255,11 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
       syncTaskFileMtime("dev");
 
       state.role = "dev";
+      debugLog(`[agent_end] 22 switching to dev role`);
       ctx.ui.setFooter(buildFooter(ctx, () => "dev"));
       writeState(state);
 
-      debugLog("after agent end: switching to dev");
+      debugLog("[agent end]: switching to dev");
       pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
     }
   });
@@ -256,18 +273,24 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_CONFIDENCE_THRESHOLD } from "./workflow";
-import {
-  buildDevTask,
-  buildQaTask,
-} from "./tasks";
-
+import { buildDevTask, buildQaTask } from "./tasks";
 function reinjectTask(pi: ExtensionAPI, state: any): void {
-  const task =
-    state.role === "dev" ? buildDevTask(state) : buildQaTask(state);
+  const task = state.role === "dev" ? buildDevTask(state) : buildQaTask(state);
   writeTaskFile(state.role, task);
   syncTaskFileMtime(state.role);
+
+  // Add specific failure reason to the reinjected message
+  let reason = "";
+  if (state.phase === "plan") {
+    if (state.role === "dev") reason = "No `[DEVSCORE:N]` score detected in your plan";
+    else if (state.role === "qa") reason = "No `[QA_SCORE:N]` score detected in your review";
+  } else {
+    const lastMsg = state.context?.lastAgentMessage || "your response";
+    reason = `Score threshold not met in ${lastMsg.substring(0, 150)}...`;
+  }
+
   pi.sendUserMessage(
-    `⚠️ The previous turn unsuccessfully completed. Here\'s your task again:\n\n${task}`,
+    `⚠️ The previous turn unsuccessfully completed.\n\n${reason}.\n\nHere's your task again:\n\n${task}`,
     { deliverAs: "followUp" },
   );
 }

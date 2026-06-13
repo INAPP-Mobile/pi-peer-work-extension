@@ -1,36 +1,35 @@
-// ─── Tag / Score Parsing ─────────────────────────────────────────────────
+// ─── Score-Only Parsing ────────────────────────────────────────────────
 //
-// Parse [SUCCESS], [FAILURE], [BLOCKER] tags and [DEVSCORE:N], [QA_SCORE:N]
-// scores from agent messages.
-
-export type QaTag = "success" | "failure" | "blocker" | null;
+// Parse [DEVSCORE:N], [QA_SCORE:N] scores from agent messages.
+// Tags ([SUCCESS], [FAILURE], [BLOCKER]) are now derived from scores:
+//   - Success: devScore + qaScore >= threshold
+//   - Failure: score sum < threshold or qaScore low indicates problems
 
 export type ScoreResult = {
-  tag: QaTag;
   devScore?: number;
   qaScore?: number;
 };
 
-export function parseScores(text: string): {
-  devScore?: number;
-  qaScore?: number;
-} | null {
-  const result: { devScore?: number; qaScore?: number } = {};
+export function parseScores(text: string): ScoreResult | null {
+  const result: ScoreResult = {
+    devScore: undefined,
+    qaScore: undefined,
+  };
   const upper = text.toUpperCase();
 
-  // [DEVSCORE:90], [DEV_SCORE:90], [DEVSCORE 90], [DEV_SCORE90]
-  const devMatch = upper.match(/\[DEV_?SCORE(?::\s*)?(\d+)\]/);
+  // [DEVSCORE:N] - exact format, no underscores or spaces allowed
+  const devMatch = upper.match(/\[DEVSCORE:(\d+)\]/);
   if (devMatch) {
     result.devScore = parseInt(devMatch[1], 10);
   }
 
-  // [QA_SCORE:94], [QASCORE:94], [QA_SCORE 94]
-  const qaMatch = upper.match(/\[QA_?SCORE(?::\s*)?(\d+)\]/);
+  // [QA_SCORE:N] - exact format
+  const qaMatch = upper.match(/\[QA_SCORE:(\d+)\]/);
   if (qaMatch) {
     result.qaScore = parseInt(qaMatch[1], 10);
   }
 
-  // Return null only if neither score found
+  // Return null only if no scores found (nothing useful in message)
   if (!devMatch && !qaMatch) return null;
 
   return result;

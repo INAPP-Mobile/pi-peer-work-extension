@@ -3,13 +3,10 @@
 // /pworkflow-goal command implementation.
 
 import { readState, writeState, PW_DIR } from "./workflow";
-import { buildDevTask } from "./tasks";
+import { buildDevMessage, buildDevTask } from "./tasks";
 import { existsSync, writeFileSync } from "node:fs";
 
-export function handleGoal(
-  args: string,
-  ctx: any,
-): void {
+export function handleGoal(pi: ExtensionAPI, args: string, ctx: any): void {
   if (!args.trim()) {
     const state = readState();
     if (state?.context.humanGoal) {
@@ -26,10 +23,7 @@ export function handleGoal(
 
   const state = readState();
   if (!state) {
-    ctx.ui.notify(
-      "No workflow state. Run /pworkflow-init first.",
-      "warning",
-    );
+    ctx.ui.notify("No workflow state. Run /pworkflow-init first.", "warning");
     return;
   }
 
@@ -44,9 +38,19 @@ export function handleGoal(
     const devTaskPath = join(pwDir, "task-dev.json");
     try {
       if (!existsSync(pwDir)) {
-        import("node:fs").then(({ mkdirSync }) => mkdirSync(pwDir, { recursive: true }));
+        import("node:fs").then(({ mkdirSync }) =>
+          mkdirSync(pwDir, { recursive: true }),
+        );
       }
-      writeFileSync(devTaskPath, JSON.stringify({ task: buildDevTask(state), assignedAt: Date.now() }, null, 2));
+      writeFileSync(
+        devTaskPath,
+        JSON.stringify(
+          { task: buildDevTask(state), assignedAt: Date.now() },
+          null,
+          2,
+        ),
+      );
+      pi.sendUserMessage(buildDevMessage(), { deliverAs: "followUp" });
     } catch (e) {
       ctx.ui.notify(`⚠️ Failed to update dev task: ${e}`, "warning");
     }
@@ -54,3 +58,4 @@ export function handleGoal(
 }
 
 import { join } from "node:path";
+import { ExtensionAPI } from "@earendil-works/pi-coding-agent";

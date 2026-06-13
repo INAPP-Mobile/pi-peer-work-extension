@@ -48,7 +48,7 @@ export default function (pi: ExtensionAPI) {
       "Set the project goal/requirements for the workflow. " +
       "Usage: /pworkflow-goal <description>",
     handler: async (args: string, ctx) => {
-      handleGoal(args, ctx);
+      handleGoal(pi, args, ctx);
     },
   });
 

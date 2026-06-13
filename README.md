@@ -12,7 +12,9 @@ BUILD  → dev builds → qa reviews    → [SUCCESS]→RELEASE
 RELEASE → dev deploys → qa confirms → [SUCCESS]→DONE
 ```
 
-Each step requires explicit approval tags (`[SUCCESS]`, `[FAILURE]`, or `[BLOCKER]`) in the output.
+Each step is determined by **scoring thresholds**, not manual tags.scores determine advancement:
+- `devScore + qaScore >= threshold` → advance to next phase
+- below threshold → continue revising
 
 ## Features
 
@@ -72,17 +74,35 @@ Shows current phase, step, and workflow state.
 
 ### PLAN Phase
 1. **Dev**: Plan the project (architecture, dependencies, implementation approach)
-2. **QA**: Review plan output and approve/deny
+2. **QA**: Review plan output and score confidence (0-100 each)
+
+**Advancement**: When `devScore + qaScore >= threshold`, move to BUILD phase.
 
 ### BUILD Phase
 1. **Dev**: Build the project (compile, test, lint)
-2. **QA**: Review build artifacts and approve/deny
+2. **QA**: Review build artifacts and score confidence
+
+**Advancement**: Threshold met → RELEASE. Not met → dev revises.
 
 ### RELEASE Phase
 1. **Dev**: Deploy and publish artifacts
 2. **QA**: Confirm release is live and working
 
+**Advancement**: Threshold met → DONE.
+
 ## Configuration
+
+Edit `.pworkflow/state.json` to adjust:
+
+```json
+{
+  "context": {
+    "confidenceThreshold": 180
+  }
+}
+```
+
+Default threshold: `180` (sum of devScore + qaScore, max 200).
 
 ## License
 

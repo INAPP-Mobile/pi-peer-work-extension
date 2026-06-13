@@ -67,74 +67,6 @@ export async function handleQaTurnEnd(
       debugLog("[pworkflow] QA → SUCCESS, checking if can advance");
       break;
     }
-    // if (state.phase === "plan") {
-    //   // Parse QA's score from their message
-    //   const qaScores = parseScores(qaMessage);
-    //   if (qaScores.qaScore !== undefined) state.context.qaScore = qaScores.qaScore;
-
-    //   const devScore = state.context.devScore ?? 0;
-    //   const qaScore = state.context.qaScore ?? 0;
-    //   const scoreSum = devScore + qaScore;
-    //   const threshold = state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD;
-
-    //   debugLog(`[pworkflow] PLAN score check: dev=${devScore}, qa=${qaScore}, sum=${scoreSum}, threshold=${threshold}`);
-
-    //   if (scoreSum >= threshold) {
-    //     debugLog("[pworkflow] SCORE THRESHOLD MET, advancing from PLAN to BUILD");
-    //     state.phase = "build";
-    //     const buildStep = WORKFLOW_STEPS.find((s) => s.phase === "build" && s.role === "dev");
-    //     if (buildStep) {
-    //       state.stepIndex = WORKFLOW_STEPS.indexOf(buildStep);
-    //       state.role = buildStep.role;
-    //     }
-    //     markPlanPhaseComplete(state);
-    //     // Write build task so dev picks it up on next session
-    //     writeTaskFile("dev", buildDevTask(state));
-    //     notifyTelegram(
-    //       `🔄 Plan phase completed! Build phase starts now — dev's turn\n\nProject: ${process.cwd()}`,
-    //       "Markdown",
-    //     );
-    //     return; // don't fall through to advanceStep — dev picks up build task on next session
-    //   } else {
-    //     debugLog("[pworkflow] SCORE BELOW THRESHOLD, sending back to dev");
-    //     writeState(state);
-    //     failBackToDev(state, "Combined score below threshold. Please address QA's feedback and improve your plan.");
-    //     writeTaskFile("dev", buildDevTask(state));
-    //     return;
-    //   }
-    // }
-
-    //   const isLastStep =
-    //     state.stepIndex >= WORKFLOW_STEPS.length - 1 ||
-    //     WORKFLOW_STEPS[state.stepIndex + 1] === undefined;
-
-    //   if (isLastStep) {
-    //     markCompleted(state);
-    //     await notifyTelegram(
-    //       [
-    //         `✅ Peer Workflow Complete`,
-    //         ``,
-    //         `Project: ${process.cwd()}`,
-    //         `Release completed successfully after QA confirmation.`,
-    //         ``,
-    //         `Phase: RELEASE`,
-    //         `Status: COMPLETED`,
-    //       ].join("\n"),
-    //       "Markdown",
-    //     );
-    //   } else {
-    //     const nextState = advanceStep(state);
-    //     const nextRole = nextState.role;
-    //     const task =
-    //       nextRole === "dev" ? buildDevTask(nextState) : buildQaTask(nextState);
-    //     writeTaskFile(nextRole, task);
-    //     pi.sendUserMessage(
-    //       `✅ QA approved! Moving to next step: ${getCurrentStep(nextState).description} (${nextRole}).`,
-    //       { deliverAs: "followUp" },
-    //     );
-    //   }
-    //   break;
-    // }
 
     case "failure": {
       debugLog("[pworkflow] QA → FAILURE, pushing back to dev");
@@ -168,14 +100,3 @@ export async function handleQaTurnEnd(
     }
   }
 }
-
-// function markPlanPhaseComplete(state: WorkflowState): WorkflowState {
-//   state.status = "plan_complete";
-//   state.context.notes = [
-//     "Plan phase complete - score threshold met",
-//     `Dev score: ${state.context.devScore ?? 0}`,
-//     `QA score: ${state.context.qaScore ?? 0}`,
-//   ].join("\n");
-//   writeState(state);
-//   return state;
-// }

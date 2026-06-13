@@ -11,6 +11,11 @@ will be FAILED and sent back to plan again. Only text-based plans are accepted r
 2. Propose a comprehensive build plan with architecture decisions
 3. Identify potential risks and mitigation strategies
 4. **WRITE YOUR PLAN TO A DOCUMENT FILE** (e.g., `plan.md`, `summary.txt`) - do not just output to chat
-5. Include [DEVSCORE:N] tag (0-100) indicating your confidence in the plan
-6. After QA reviews, include [QA_SCORE:N] tag (0-100) scoring QA's review
-7. Iterate until combined score >= threshold ({{CONFIDENCE_THRESHOLD}})
+5. Include `[DEVSCORE:N]` tag (0-100) indicating your confidence in the plan
+6. After QA reviews, include `[QA_SCORE:N]` tag (0-100) scoring QA's review
+7. Iterate until combined score >= threshold (`{{CONFIDENCE_THRESHOLD}}`)
+### ⚠️ STRICT FORMAT REQUIREMENT FOR SCORES
+The system parses scores using regex — **exact format required**:
+- `[DEVSCORE:90]` is valid (no space, no underscore between DEV and SCORE)
+- `[DEV_SCORE:90], [DEV SCORE:90`, `Dev score: 90/100` are INVALID
+- Violations result in `No score found in message` → task reinjection

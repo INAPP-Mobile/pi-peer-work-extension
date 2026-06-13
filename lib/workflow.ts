@@ -64,6 +64,7 @@ export interface WorkflowState {
     qaFeedback?: string; // last QA message fed back to dev
     notes?: string; // additional workflow context
     humanGoal?: string; // human goal for the current task
+    lastAgentMessage?: string; // last agent message (for error reporting)
   };
 }
 
@@ -428,84 +429,13 @@ export function advancePhase(state: WorkflowState): WorkflowState | null {
     state.status = "in_progress";
     state.roundsToAdvance = DEFAULT_ROUND_TO_ADVANCE;
     state.role = "dev";
+    debugLog(`[advancePhase] switching to dev role`);
     writeState(state);
   } else {
     return null;
   }
   return state;
 }
-
-// export function advanceStep(state: WorkflowState): WorkflowState {
-//   // Plan phase: dev → qa looping until threshold met externally
-//   if (state.phase === "plan") {
-//     const currentStep = WORKFLOW_STEPS[state.stepIndex];
-//     // Dev step in plan → go to QA review (step 1), not forward to build
-//     if (currentStep.role === "dev") {
-//       const qaReviewStep = WORKFLOW_STEPS.find(
-//         (s) => s.phase === "plan" && s.role === "qa",
-//       );
-//       if (qaReviewStep) {
-//         state.stepIndex = WORKFLOW_STEPS.indexOf(qaReviewStep);
-//         state.role = qaReviewStep.role;
-//         writeState(state);
-//         return state;
-//       }
-//     }
-//     // QA step in plan → advance to build (threshold was met externally by handleQaTurnEnd)
-//     state.phase = "build";
-//     const buildDevStep = WORKFLOW_STEPS.find(
-//       (s) => s.phase === "build" && s.role === "dev",
-//     );
-//     state.stepIndex = buildDevStep
-//       ? WORKFLOW_STEPS.indexOf(buildDevStep)
-//       : state.stepIndex + 1;
-//     state.role = WORKFLOW_STEPS[state.stepIndex].role;
-//     writeState(state);
-//     return state;
-//   }
-
-//   const nextIdx = state.stepIndex + 1;
-
-//   if (nextIdx >= WORKFLOW_STEPS.length) {
-//     state.status = "completed";
-//     state.role = "qa";
-//     writeState(state);
-//     return state;
-//   }
-
-//   const nextStep = WORKFLOW_STEPS[nextIdx];
-//   if (state.phase === "build" && nextStep.phase === "release") {
-//     state.phase = "release";
-//   }
-
-//   state.stepIndex = nextIdx;
-//   state.role = nextStep.role;
-//   state.roundsToAdvance = (state as any).roundsToAdvance ?? 10;
-//   state.confidenceThreshold =
-//     state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD;
-//   state.qaOutputFile = join(PW_DIR(), "output-qa.txt");
-//   state.devTaskFile = join(PW_DIR(), "task-dev.json");
-//   state.qaTaskFile = join(PW_DIR(), "task-qa.json");
-//   writeState(state);
-//   return state;
-// }
-
-// /** Force advance past confidence check (max rounds reached). */
-// export function forceAdvanceStep(state: WorkflowState): WorkflowState {
-//   const isLastStep =
-//     state.stepIndex >= WORKFLOW_STEPS.length - 1 ||
-//     WORKFLOW_STEPS[state.stepIndex + 1] === undefined;
-//   if (isLastStep) return markCompleted(state);
-
-//   const scoreSum =
-//     (state.context.devScore ?? 0) + Math.min(100, state.context.qaScore ?? 0);
-//   const maxRounds = (state as any).roundsToAdvance ?? 10;
-//   console.log(
-//     `[pworkflow] max rounds reached (${maxRounds}/10), force advancing — sum ${scoreSum} < ${state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD}`,
-//   );
-//   state.context.notes = `${state.context.notes || ""}\n[Force-advanced after ${maxRounds} rounds, confidence sum ${scoreSum} < threshold ${state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD}]`;
-//   return advanceStep(state);
-// }
 
 export function failBackToDev(
   state: WorkflowState,
@@ -526,6 +456,7 @@ export function failBackToDev(
       `[pworkflow] max iterations (${prevToAdvance}) reached after QA failure, pushing back to dev`,
     );
     state.role = "dev";
+    debugLog(`[fallBackToDev] 11 switching to dev role`);
     state.status = "in_progress";
     writeState(state);
     return state;
@@ -536,6 +467,7 @@ export function failBackToDev(
 
   // Push back to dev — reset step index to start of phase and set role to dev
   state.role = "dev";
+  debugLog(`[fallBackToDev] 22 switching to dev role`);
   state.status = "in_progress";
   writeState(state);
   return state;
@@ -612,10 +544,10 @@ export function getSubtaskOrder(): string[] | null {
 export function getCurrentSubtask(state: WorkflowState): string | null {
   const order = getSubtaskOrder();
   if (!order) return null;
-  
+
   const currentIndex = state.currentSubtaskIndex ?? 0;
   if (currentIndex >= order.length) return null;
-  
+
   return order[currentIndex];
 }
 
@@ -625,28 +557,29 @@ export function getCurrentSubtask(state: WorkflowState): string | null {
  */
 export function advanceSubtask(state: WorkflowState): boolean {
   if (state.phase !== "build") return false;
-  
+
   const order = getSubtaskOrder();
   if (!order) return false;
-  
+
   // Track completion
   if (!state.subtasksCompleted) state.subtasksCompleted = [];
   state.subtasksCompleted.push(state.currentSubtaskIndex ?? 0);
-  
+
   // Advance to next subtask
   let newIndex = (state.currentSubtaskIndex ?? 0) + 1;
-  
+
   if (newIndex >= order.length) {
     // All subtasks complete - advance to release phase
     state.phase = "release";
-    state.stepIndex = WORKFLOW_PHASES.findIndex(p => p.phase === "release");
+    state.stepIndex = WORKFLOW_PHASES.findIndex((p) => p.phase === "release");
     state.currentSubtaskIndex = undefined;
     writeState(state);
     return false; // no more subtasks in build
   }
-  
+
   state.currentSubtaskIndex = newIndex;
   state.role = "dev";
+  debugLog(`[advanceSubtask] switching to dev role`);
   writeState(state);
   return true; // more subtasks to do
 }
@@ -657,7 +590,7 @@ export function advanceSubtask(state: WorkflowState): boolean {
 export function resetBuildTracking(state: WorkflowState): void {
   const order = getSubtaskOrder();
   if (!order || order.length === 0) return;
-  
+
   state.currentSubtaskIndex = 0;
   state.subtasksCompleted = [];
   writeState(state);
@@ -670,15 +603,21 @@ export function PW_DIR(): string {
 /**
  * Get total number of subtasks and completed count from workflow state.
  */
-export function getSubtaskProgress(state: WorkflowState): { total: number; completed: number } {
+export function getSubtaskProgress(state: WorkflowState): {
+  total: number;
+  completed: number;
+} {
   const order = getSubtaskOrder();
   if (!order) return { total: 0, completed: 0 };
-  
+
   const completed = state.subtasksCompleted?.length ?? 0;
   const current = state.currentSubtaskIndex ?? 0;
   // Include the current subtask as in-progress
   const total = order.length;
-  return { total, completed: Math.min(completed + (current > 0 ? 1 : 0), total) };
+  return {
+    total,
+    completed: Math.min(completed + (current > 0 ? 1 : 0), total),
+  };
 }
 
 /** Sync the mtime of a task file to prevent re-firing pollers. */

@@ -17,16 +17,10 @@ Each session you'll receive a task file telling you exactly what to do.
 The conversation history is compacted between sessions. Document files persist.
 
 ## Workflow Conventions
-- When done, write your summary and tag it with the appropriate label in your document file.
-- If you encounter an unrecoverable issue, tag your output clearly.
-
-## Tags
-Include one of these tags in your final document file. The extension reads these to decide the next step:
-- `[SUCCESS]` — Task completed successfully
-- `[FAILURE]` — Task failed, provide details
-- `[BLOCKER]` — Cannot proceed, needs human intervention
+- Always include `[DEVSCORE:N]` (0-100) to score your own work quality
+- Combined score with QA must reach threshold (`{{CONFIDENCE_THRESHOLD}}`) to advance
 
 ## Constraints
 - You do NOT make release decisions — you build, deploy, and publish.
 - QA reviews and confirms your work. Trust the process.
-- If QA sends feedback, address it and re-submit with `[SUCCESS]` or `[FAILURE]`.
+- If QA sends feedback, address it and re-submit.
