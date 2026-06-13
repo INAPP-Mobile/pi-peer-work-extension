@@ -2,9 +2,9 @@
  * Compact handler - prepares session compaction with workflow-aware summary
  *
  * Strategy:
- * 1. Build a minimal 3-line summary containing role, phase, goal, threshold
- * 2. Keep the recent turn messages (via firstKeptEntryId) so task can continue
- * 3. Discard old conversation history by replacing it with summary
+ * 1. Build a minimal 3-line summary containing role, phase, goal
+ * 2. Set firstKeptEntryId to the last valid cut point so only summary is kept
+ * 3. Agent picks up after compact via task file, not conversation history
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -25,12 +25,27 @@ export function initCompact(pi: ExtensionAPI): void {
 Phase: ${state.phase}
 Goal: ${state.context.humanGoal.substring(0, 200)}`;
 
+    // Walk backwards through branch entries to find the last valid cut point
+    // (tool results can't be cut points — they must stay with their tool call)
+    // This ensures we keep only the most recent turn, not the default ~20k tokens
+    const entries = event.branchEntries;
+    let lastCutPointId: string | null = null;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (entry.type === "message" && entry.message?.role !== "toolResult") {
+        lastCutPointId = entry.id;
+        break;
+      }
+    }
+    const firstKeptEntryId = lastCutPointId ?? event.preparation.firstKeptEntryId;
+
     debugLog("[compact] creating workflow summary", summary);
+    debugLog("[compact] firstKeptEntryId", firstKeptEntryId);
 
     return {
       compaction: {
         summary,
-        firstKeptEntryId: event.preparation.firstKeptEntryId,
+        firstKeptEntryId,
         tokensBefore: event.preparation.tokensBefore,
       },
     };
