@@ -39,6 +39,7 @@ export interface WorkflowPhase {
 export interface WorkflowState {
   phase: Phase;
   role: Role; // current active role
+  nextRole: Role;
   stepIndex: number; // index into STEPS array
   startedAt: number;
   updatedAt: number;
@@ -221,6 +222,7 @@ export function initState(): WorkflowState {
   const state: WorkflowState = {
     phase: "plan",
     role: "dev",
+    nextRole: "qa",
     stepIndex: 0,
     startedAt: Date.now(),
     updatedAt: Date.now(),
@@ -282,6 +284,7 @@ export function resetState(): void {
     const state: WorkflowState = {
       phase: "plan",
       role: "dev",
+      nextRole: "qa",
       stepIndex: 0,
       startedAt: Date.now(),
       updatedAt: Date.now(),
@@ -428,7 +431,10 @@ export function advancePhase(state: WorkflowState): WorkflowState | null {
     state.phase = newPhase;
     state.status = "in_progress";
     state.roundsToAdvance = DEFAULT_ROUND_TO_ADVANCE;
-    state.role = "dev";
+    state.nextRole = "dev";
+    state.context.devScore = 0;
+    state.context.qaScore = 0;
+
     debugLog(`[advancePhase] switching to dev role`);
     writeState(state);
   } else {
@@ -570,15 +576,14 @@ export function advanceSubtask(state: WorkflowState): boolean {
 
   if (newIndex >= order.length) {
     // All subtasks complete - advance to release phase
-    state.phase = "release";
-    state.stepIndex = WORKFLOW_PHASES.findIndex((p) => p.phase === "release");
+    advancePhase(state);
     state.currentSubtaskIndex = undefined;
     writeState(state);
     return false; // no more subtasks in build
   }
 
   state.currentSubtaskIndex = newIndex;
-  state.role = "dev";
+  state.nextRole = "dev";
   debugLog(`[advanceSubtask] switching to dev role`);
   writeState(state);
   return true; // more subtasks to do

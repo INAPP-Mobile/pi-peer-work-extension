@@ -5,51 +5,72 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { readState } from "./workflow";
-import { buildDevMessage, buildQaMessage } from "./tasks";
+import {
+  readState,
+  writeState,
+  resetState,
+  clearTaskFile,
+  writeTaskFile,
+  syncTaskFileMtime,
+} from "./workflow";
 import { notifyTelegram } from "./telegram";
 import { debugLog } from "./logger";
+import { buildFooter } from "./ui";
+import {
+  buildDevMessage,
+  buildDevTask,
+  buildQaMessage,
+  buildQaTask,
+} from "./tasks";
 
 export function registerTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "pworkflow-compact",
-    label: "Compact session",
-    description: "Compact the session",
-    parameters: Type.Object({
-      message: Type.String({
-        description:
-          "The custom instructions to use when compacting the session",
-      }),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    label: "Compact session (nuke to ~0)",
+    description:
+      "Reset workflow context and achieve near-zero conversation tokens like /new",
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
+      // Trigger compaction which will be cancelled by session_before_compact
       ctx.compact({
-        customInstructions: params.message,
+        customInstructions:
+          "Near-zero token compaction - clear conversation context",
         onComplete: () => {
-          const state = readState();
-          if (state?.role === "dev") {
-            debugLog("after compaction dev role: sending dev message");
-            pi.sendUserMessage(buildDevMessage(), {
+          var state = readState();
+          if (!state) {
+            debugLog("[compact] no state to update");
+            pi.sendUserMessage("no state to update error report to human", {
               deliverAs: "followUp",
             });
-          } else if (state?.role === "qa") {
-            debugLog("after compaction qa role: sending qa message");
-            pi.sendUserMessage(buildQaMessage(), {
-              deliverAs: "followUp",
-            });
+            return;
           }
+          debugLog(`[compact] switching to ${state.nextRole}`);
+
+          clearTaskFile(state.role);
+          writeTaskFile(state.nextRole, buildQaTask(state));
+          syncTaskFileMtime(state.nextRole);
+
+          state.role = state.nextRole;
+          state.nextRole = state.role === "dev" ? "qa" : "dev";
+          ctx.ui.setFooter(buildFooter(ctx, () => state?.role ?? null));
+          writeState(state);
+          pi.sendUserMessage(buildQaMessage(), { deliverAs: "followUp" });
         },
         onError: (error) => {
-          pi.sendUserMessage(
-            `Error compacting session: report to human: ${error.message}`,
-            {
-              deliverAs: "followUp",
-            },
-          );
+          pi.sendUserMessage("compaction error report to human", {
+            deliverAs: "followUp",
+          });
+          debugLog(`[compact] compaction error (expected): ${error.message}`);
         },
       });
 
       return {
-        content: [{ type: "text", text: `session compacted` }],
+        content: [
+          {
+            type: "text",
+            text: `workflow context reset for near-zero conversation tokens`,
+          },
+        ],
         details: { tool: "pworkflow-compact" },
       };
     },

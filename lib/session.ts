@@ -94,7 +94,8 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
     const scores = parseScores(lastMsg);
 
     // Store last message for error reporting
-    state.context.lastAgentMessage = lastMsg.substring(0, 200) + (lastMsg.length > 200 ? "..." : "");
+    state.context.lastAgentMessage =
+      lastMsg.substring(0, 200) + (lastMsg.length > 200 ? "..." : "");
 
     if (scores && scores.devScore !== undefined) {
       state.context.devScore = scores.devScore;
@@ -133,15 +134,15 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
     const scores = parseScores(lastMsg);
 
     // In plan phase, require self-score from dev or review score from qa
-    if (state.phase === "plan") {
-      if (
-        (scores && state.role === "dev" && scores.devScore === undefined) ||
-        (scores && state.role === "qa" && scores.qaScore === undefined)
-      ) {
-        debugLog(`[agent_end] missing required score for plan phase: ${state.role}`);
-        reinjectTask(pi, state);
-        return;
-      }
+    if (
+      (scores && state.role === "dev" && scores.devScore === undefined) ||
+      (scores && state.role === "qa" && scores.qaScore === undefined)
+    ) {
+      debugLog(
+        `[agent_end] missing required score for plan phase: ${state.role}`,
+      );
+      reinjectTask(pi, state);
+      return;
     }
 
     var scoreExists = false;
@@ -171,21 +172,10 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
           );
           state.context.devScore = 0;
           state.context.qaScore = 0;
-
-          const role = state.role || "dev";
-          ctx.ui.setFooter(buildFooter(ctx, () => role));
-          const hasMore = advanceSubtask(state);
-          if (hasMore) {
-            ctx.ui.notify(
-              `[pworkflow] subtask ${currentIdx} complete. Moving to subtask ${currentIdx + 1}.`,
-              "info",
-            );
-            pi.sendUserMessage("run pworkflow-compact", {
-              deliverAs: "followUp",
-            });
-          }
+          state.nextRole = "dev";
+          ctx.ui.setFooter(buildFooter(ctx, () => "dev"));
+          advanceSubtask(state);
           writeState(state);
-          return;
         } else {
           debugLog(
             `[agent_end] all build subtasks complete, advancing to release`,
@@ -217,20 +207,8 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
         `[pworkflow] threshold met, advancing to next phase: ${state.phase} (${scoreSum} >= ${threshold})`,
         "info",
       );
-      state.context.devScore = 0;
-      state.context.qaScore = 0;
-      writeState(state);
-
-      clearTaskFile("qa");
-      const buildTask = buildDevTask(state);
-      writeTaskFile("dev", buildTask);
-      syncTaskFileMtime("dev");
-      state.role = "dev";
       debugLog(`[agent_end] 11 switching to dev role`);
-      ctx.ui.setFooter(buildFooter(ctx, () => "dev"));
       writeState(state);
-      pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
-      return;
     } else {
       ctx.ui.notify(
         `[pworkflow] threshold NOT met, continue to revise (${scoreSum} < ${threshold})`,
@@ -238,30 +216,7 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
       );
     }
 
-    if (state.role === "dev") {
-      clearTaskFile("dev");
-      writeTaskFile("qa", buildQaTask(state));
-      syncTaskFileMtime("qa");
-
-      state.role = "qa";
-      ctx.ui.setFooter(buildFooter(ctx, () => "qa"));
-      writeState(state);
-
-      debugLog("[agent end]: switching to qa");
-      pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
-    } else if (state.role === "qa") {
-      clearTaskFile("qa");
-      writeTaskFile("dev", buildDevTask(state));
-      syncTaskFileMtime("dev");
-
-      state.role = "dev";
-      debugLog(`[agent_end] 22 switching to dev role`);
-      ctx.ui.setFooter(buildFooter(ctx, () => "dev"));
-      writeState(state);
-
-      debugLog("[agent end]: switching to dev");
-      pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
-    }
+    pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
   });
 
   // ─── Session Shutdown ────────────────────────────────────────────
@@ -282,8 +237,10 @@ function reinjectTask(pi: ExtensionAPI, state: any): void {
   // Add specific failure reason to the reinjected message
   let reason = "";
   if (state.phase === "plan") {
-    if (state.role === "dev") reason = "No `[DEVSCORE:N]` score detected in your plan";
-    else if (state.role === "qa") reason = "No `[QA_SCORE:N]` score detected in your review";
+    if (state.role === "dev")
+      reason = "No `[DEVSCORE:N]` score detected in your plan";
+    else if (state.role === "qa")
+      reason = "No `[QA_SCORE:N]` score detected in your review";
   } else {
     const lastMsg = state.context?.lastAgentMessage || "your response";
     reason = `Score threshold not met in ${lastMsg.substring(0, 150)}...`;

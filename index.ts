@@ -14,6 +14,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { handleInit, handleStatus, handleReset } from "./lib/commands";
 import { registerTools } from "./lib/tools";
 import { registerSessionHandlers } from "./lib/session";
+import { initCompact } from "./lib/compact";
 import { handleRole } from "./lib/role";
 import { handleGoal } from "./lib/goal";
 
@@ -67,4 +68,8 @@ export default function (pi: ExtensionAPI) {
   // ─── Session Event Handlers ───────────────────────────────────────
 
   registerSessionHandlers(pi);
+
+  // ─── Compact Handler ──────────────────────────────────────────────
+
+  initCompact(pi);
 }
