@@ -16,20 +16,22 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
-  rmSync,
   unlinkSync,
   statSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 
-export type Phase = "build" | "release" | "plan";
+export type Phase = "build" | "release" | "plan" | "divide";
+export type PlanPhaseMode = "initial" | "iteration" | "done";
 export type Role = "dev" | "qa";
 
-export interface WorkflowStep {
+/** Default combined score threshold (devScore + qaScore), max 200. */
+export const DEFAULT_CONFIDENCE_THRESHOLD = 180;
+export const DEFAULT_ROUND_TO_ADVANCE = 10;
+
+export interface WorkflowPhase {
   phase: Phase;
-  step: number;
-  role: Role;
   description: string;
 }
 
@@ -40,11 +42,16 @@ export interface WorkflowState {
   startedAt: number;
   updatedAt: number;
   status: "in_progress" | "completed" | "blocked" | "failed";
-  qaOutputFile: string;
+  devOutputFile: string; // dev writes work product here (read by QA)
+  qaOutputFile: string; // QA writes review feedback here (read by dev)
   devTaskFile: string;
   qaTaskFile: string;
-  confidenceThreshold: number; // min sum (devScore + qaScore) to advance, default 95
+  confidenceThreshold: number; // min sum (devScore + qaScore, max 200) to advance. Defaults to DEFAULT_CONFIDENCE_THRESHOLD
   roundsToAdvance: number; // remaining rounds until forced advance, default 10
+  roleModels?: {
+    dev?: string; // model ID for dev role (e.g. "anthropic/claude-sonnet-4-5")
+    qa?: string; // model ID for QA role
+  };
   context: {
     devScore?: number; // dev's positive confidence (0-100): how well they met requirements
     qaScore?: number; // qa's negative confidence (0-100): how much they doubt quality
@@ -53,34 +60,62 @@ export interface WorkflowState {
     publishResult?: string;
     qaFeedback?: string; // last QA message fed back to dev
     notes?: string; // additional workflow context
+    humanGoal?: string; // human goal for the current task
   };
 }
 
 // ─── Workflow Step Definitions ─────────────────────────────────────────
 
-export const WORKFLOW_STEPS: WorkflowStep[] = [
-  // PLAN phase
-  { phase: "plan", step: 0, role: "dev", description: "Plan the project" },
-  { phase: "plan", step: 1, role: "qa", description: "Review plan output" },
-  // Transition to RELEASE on [SUCCESS]; on [FAILURE] go back to step 0; on [BLOCKER] escalate
+export const WORKFLOW_PHASES: WorkflowPhase[] = [
+  {
+    phase: "plan",
+    description:
+      "Plan phase: dev researches plan for human goal, qa validates.\n" +
+      "- Dev produces a plan outline with clear steps to achieve the human's goal.\n" +
+      "- If plan exceeds 8k tokens, split into parts (plan-part1.md, plan-part2.md...).\n" +
+      "- For multi-part plans: dev writes summary.md combining key points and per-part scores (0-100 each).\n" +
+      "- QA reviews the summary (and all parts if needed within token budget), finds missing parts or ambiguities.\n" +
+      "- QA scores confidence in the overall plan on scale 0-100.",
+  },
 
-  // BUILD phase
-  { phase: "build", step: 0, role: "dev", description: "Build the project" },
-  { phase: "build", step: 1, role: "qa", description: "Review build output" },
-  // Transition to RELEASE on [SUCCESS]; on [FAILURE] go back to step 0; on [BLOCKER] escalate
+  {
+    phase: "divide",
+    description:
+      "Divide phase: dev breaks plan into subtasks, qa validates scope.\n" +
+      "- Dev breaks the plan into smaller actionable tasks, each under 8k token budget.\n" +
+      "- Dev writes each task in a separate document in the doc folder with numbered filenames (task-001.md, task-002.md...).\n" +
+      "- Dev records execution order in .pworkflow/task-order.json (ordered list of filenames).\n" +
+      "- QA verifies tasks are written in executable order and matches the recorded order.\n" +
+      "- Dev scores completeness of the subtask division on scale 0-100.\n" +
+      "- QA checks for gaps, dependencies, feasibility, and token budget compliance.\n" +
+      "- QA scores confidence in the division plan on scale 0-100.",
+  },
 
-  // RELEASE phase
-  { phase: "release", step: 0, role: "dev", description: "Deploy and publish" },
-  { phase: "release", step: 1, role: "qa", description: "Confirm release" },
-  // On [SUCCESS] workflow complete → notify human; on [FAILURE] go back to step 0; on [BLOCKER] escalate
+  {
+    phase: "build",
+    description:
+      "Build phase: dev implements subtask, qa reviews.\n" +
+      "- Dev completes the subtask (output under 8k tokens) and scores completeness on scale 0-100.\n" +
+      "- QA verifies the implementation, scores confidence 0-100.",
+  },
+
+  {
+    phase: "release",
+    description:
+      "Release phase: dev deploys to production, qa confirms readiness.\n" +
+      "- Dev deploys/publishes changes to railway production (output under 8k tokens).\n" +
+      "- Dev scores deployment success on scale 0-100.\n" +
+      "- QA runs final checks, confirms no blockers.\n" +
+      "- QA scores confidence in the release on scale 0-100.",
+  },
 ];
 
 export const GITIGNORE_CONTENT = [
   `
   # Auto-generated by pworkflow
-  state.json
-  task-*.json
-  output-qa.txt
+  .pworkflow/*
+  .pworkflow/task-*.json
+  .pworkflow/output-*.txt
 `,
 ].join("\n");
 () => PW_DIR();
@@ -94,9 +129,32 @@ function ensureDir(): void {
 
 // ─── Read / Write State ─────────────────────────────────────────────────
 
+const STATE_FILE = "state.json";
+
+// Old broken path from prior versions — migrate on read
+// Bug: readState/writeState used join(PW_DIR(), ".pworkflow/*") = .pworkflow/.pworkflow/*
+function oldStatePath(): string {
+  return join(PW_DIR(), ".pworkflow", "*");
+}
+
 export function readState(): WorkflowState | null {
-  const path = join(PW_DIR(), "state.json");
-  if (!existsSync(path)) return null;
+  const path = join(PW_DIR(), STATE_FILE);
+  if (!existsSync(path)) {
+    // Migrate state from old broken path (.pworkflow/.pworkflow/*)
+    const oldPath = oldStatePath();
+    if (existsSync(oldPath)) {
+      try {
+        const data = readFileSync(oldPath, "utf-8");
+        const state = JSON.parse(data) as WorkflowState;
+        writeState(state); // write to new correct path
+        try {
+          unlinkSync(oldPath);
+        } catch {} // remove old
+        return state;
+      } catch {}
+    }
+    return null;
+  }
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
   } catch {
@@ -107,7 +165,7 @@ export function readState(): WorkflowState | null {
 export function writeState(state: WorkflowState): void {
   ensureDir();
   state.updatedAt = Date.now();
-  const path = join(PW_DIR(), "state.json");
+  const path = join(PW_DIR(), STATE_FILE);
   writeFileSync(path, JSON.stringify(state, null, 2));
 }
 
@@ -116,19 +174,16 @@ export function writeState(state: WorkflowState): void {
 export function initState(): WorkflowState {
   ensureDir();
 
-  // Create .gitignore in project root to ignore .pworkflow/
-  try {
-    const rootGitignore = join(process.cwd(), ".gitignore");
-    if (!existsSync(rootGitignore)) {
-      writeFileSync(rootGitignore, ".pworkflow/\n", "utf-8");
-    } else {
-      // Ensure .pworkflow/ is listed
-      const existing = readFileSync(rootGitignore, "utf-8");
-      if (!existing.includes(".pworkflow/")) {
-        writeFileSync(rootGitignore, `.pworkflow/\n${existing}`, "utf-8");
-      }
+  // Preserve roleModels from existing state so model config survives re-init
+  const existing = (() => {
+    try {
+      return readState();
+    } catch {
+      return null;
     }
-  } catch {}
+  })();
+  const roleModels = existing?.roleModels ?? {};
+  const context = existing?.context ?? {};
 
   // Init git repo if not already tracked
   try {
@@ -138,6 +193,7 @@ export function initState(): WorkflowState {
       const result = spawnSync("git", ["init"], {
         cwd: process.cwd(),
         stdio: "inherit",
+        timeout: 10_000, // 10s timeout to prevent freezing
       });
       if (result.status === 0 && existsSync(gitDir)) {
         // Log git init
@@ -165,46 +221,84 @@ export function initState(): WorkflowState {
     startedAt: Date.now(),
     updatedAt: Date.now(),
     status: "in_progress",
+    devOutputFile: join(PW_DIR(), "output-dev.txt"),
     qaOutputFile: join(PW_DIR(), "output-qa.txt"),
     devTaskFile: join(PW_DIR(), "task-dev.json"),
     qaTaskFile: join(PW_DIR(), "task-qa.json"),
-    confidenceThreshold: 95,
-    roundsToAdvance: 10,
-    context: {},
+    confidenceThreshold: DEFAULT_CONFIDENCE_THRESHOLD,
+    roundsToAdvance: DEFAULT_ROUND_TO_ADVANCE,
+    roleModels,
+    context,
   };
   writeState(state);
   return state;
 }
 
+export function getRoleModel(
+  role: Role,
+  state: WorkflowState,
+): string | undefined {
+  return state.roleModels?.[role];
+}
+
+export function setRoleModel(
+  role: Role,
+  modelId: string,
+  state: WorkflowState,
+): void {
+  if (!state.roleModels) state.roleModels = {};
+  state.roleModels[role] = modelId;
+  writeState(state);
+}
+
 export function resetState(): void {
-  // Remove all state files for clean restart
-  const dir = PW_DIR();
-  if (!existsSync(dir)) return;
-  try {
-    const files = [
-      "state.json",
-      "task-dev.json",
-      "task-qa.json",
-      "output-qa.txt",
-    ];
-    for (const f of files) {
+  const pwDir = PW_DIR();
+
+  // Delete stale output files so fresh workflow starts clean
+  for (const f of [
+    "output-dev.txt",
+    "output-qa.txt",
+    "task-dev.json",
+    "task-qa.json",
+  ]) {
+    const fp = join(pwDir, f);
+    if (existsSync(fp)) {
       try {
-        try {
-          rmSync(join(dir, f));
-        } catch {
-          try {
-            unlinkSync(join(dir, f));
-          } catch {}
-        }
+        unlinkSync(fp);
       } catch {}
     }
+  }
+
+  try {
+    // Preserve roleModels AND context from existing state
+    const existing = readState();
+    const roleModels = existing?.roleModels ?? {};
+    const context = existing?.context ?? {};
+
+    const state: WorkflowState = {
+      phase: "plan",
+      role: "dev",
+      stepIndex: 0,
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      status: "in_progress",
+      devOutputFile: join(pwDir, "output-dev.txt"),
+      qaOutputFile: join(pwDir, "output-qa.txt"),
+      devTaskFile: join(pwDir, "task-dev.json"),
+      qaTaskFile: join(pwDir, "task-qa.json"),
+      confidenceThreshold: DEFAULT_CONFIDENCE_THRESHOLD,
+      roundsToAdvance: 10,
+      roleModels,
+      context,
+    };
+    writeState(state);
   } catch {}
 }
 
 // ─── Workflow Queries ───────────────────────────────────────────────────
 
-export function getCurrentStep(state: WorkflowState): WorkflowStep {
-  return WORKFLOW_STEPS[state.stepIndex];
+export function getCurrentStep(state: WorkflowState): WorkflowPhase {
+  return WORKFLOW_PHASES[state.stepIndex];
 }
 
 export function isDevTurn(state: WorkflowState): boolean {
@@ -318,48 +412,94 @@ export function writeQaOutput(status: string, body: string): void {
 
 // ─── Advance / Fallback / Escalate ──────────────────────────────────────
 
-export function advanceStep(state: WorkflowState): WorkflowState {
-  const nextIdx = state.stepIndex + 1;
-
-  if (nextIdx >= WORKFLOW_STEPS.length) {
-    state.status = "completed";
-    state.role = "qa";
-    writeState(state);
-    return state;
+export function advancePhase(state: WorkflowState): WorkflowState | null {
+  const currentPhase = state.phase;
+  if (state.stepIndex + 1 < WORKFLOW_PHASES.length) {
+    const newPhase = WORKFLOW_PHASES[state.stepIndex].phase;
+    while (newPhase === currentPhase) {
+      state.stepIndex++;
+    }
+    state.phase = newPhase;
+    state.status = "in_progress";
+    state.roundsToAdvance = DEFAULT_ROUND_TO_ADVANCE;
+    state.role = "dev";
+  } else {
+    return null;
   }
-
-  const nextStep = WORKFLOW_STEPS[nextIdx];
-  if (state.phase === "build" && nextStep.phase === "release") {
-    state.phase = "release";
-  }
-
-  state.stepIndex = nextIdx;
-  state.role = nextStep.role;
-  state.roundsToAdvance = (state as any).roundsToAdvance ?? 10; // reset rounds for new step pair
-  state.confidenceThreshold = state.confidenceThreshold ?? 95;
-  state.qaOutputFile = join(PW_DIR(), "output-qa.txt");
-  state.devTaskFile = join(PW_DIR(), "task-dev.json");
-  state.qaTaskFile = join(PW_DIR(), "task-qa.json");
-  writeState(state);
   return state;
 }
 
-/** Force advance past confidence check (max rounds reached). */
-export function forceAdvanceStep(state: WorkflowState): WorkflowState {
-  const isLastStep =
-    state.stepIndex >= WORKFLOW_STEPS.length - 1 ||
-    WORKFLOW_STEPS[state.stepIndex + 1] === undefined;
-  if (isLastStep) return markCompleted(state);
+// export function advanceStep(state: WorkflowState): WorkflowState {
+//   // Plan phase: dev → qa looping until threshold met externally
+//   if (state.phase === "plan") {
+//     const currentStep = WORKFLOW_STEPS[state.stepIndex];
+//     // Dev step in plan → go to QA review (step 1), not forward to build
+//     if (currentStep.role === "dev") {
+//       const qaReviewStep = WORKFLOW_STEPS.find(
+//         (s) => s.phase === "plan" && s.role === "qa",
+//       );
+//       if (qaReviewStep) {
+//         state.stepIndex = WORKFLOW_STEPS.indexOf(qaReviewStep);
+//         state.role = qaReviewStep.role;
+//         writeState(state);
+//         return state;
+//       }
+//     }
+//     // QA step in plan → advance to build (threshold was met externally by handleQaTurnEnd)
+//     state.phase = "build";
+//     const buildDevStep = WORKFLOW_STEPS.find(
+//       (s) => s.phase === "build" && s.role === "dev",
+//     );
+//     state.stepIndex = buildDevStep
+//       ? WORKFLOW_STEPS.indexOf(buildDevStep)
+//       : state.stepIndex + 1;
+//     state.role = WORKFLOW_STEPS[state.stepIndex].role;
+//     writeState(state);
+//     return state;
+//   }
 
-  const scoreSum =
-    (state.context.devScore ?? 0) + Math.min(100, state.context.qaScore ?? 0);
-  const maxRounds = (state as any).roundsToAdvance ?? 10;
-  console.log(
-    `[pworkflow] max rounds reached (${maxRounds}/10), force advancing — sum ${scoreSum} < ${state.confidenceThreshold ?? 95}`,
-  );
-  state.context.notes = `${state.context.notes || ""}\n[Force-advanced after ${maxRounds} rounds, confidence sum ${scoreSum} < threshold ${state.confidenceThreshold ?? 95}]`;
-  return advanceStep(state);
-}
+//   const nextIdx = state.stepIndex + 1;
+
+//   if (nextIdx >= WORKFLOW_STEPS.length) {
+//     state.status = "completed";
+//     state.role = "qa";
+//     writeState(state);
+//     return state;
+//   }
+
+//   const nextStep = WORKFLOW_STEPS[nextIdx];
+//   if (state.phase === "build" && nextStep.phase === "release") {
+//     state.phase = "release";
+//   }
+
+//   state.stepIndex = nextIdx;
+//   state.role = nextStep.role;
+//   state.roundsToAdvance = (state as any).roundsToAdvance ?? 10;
+//   state.confidenceThreshold =
+//     state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD;
+//   state.qaOutputFile = join(PW_DIR(), "output-qa.txt");
+//   state.devTaskFile = join(PW_DIR(), "task-dev.json");
+//   state.qaTaskFile = join(PW_DIR(), "task-qa.json");
+//   writeState(state);
+//   return state;
+// }
+
+// /** Force advance past confidence check (max rounds reached). */
+// export function forceAdvanceStep(state: WorkflowState): WorkflowState {
+//   const isLastStep =
+//     state.stepIndex >= WORKFLOW_STEPS.length - 1 ||
+//     WORKFLOW_STEPS[state.stepIndex + 1] === undefined;
+//   if (isLastStep) return markCompleted(state);
+
+//   const scoreSum =
+//     (state.context.devScore ?? 0) + Math.min(100, state.context.qaScore ?? 0);
+//   const maxRounds = (state as any).roundsToAdvance ?? 10;
+//   console.log(
+//     `[pworkflow] max rounds reached (${maxRounds}/10), force advancing — sum ${scoreSum} < ${state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD}`,
+//   );
+//   state.context.notes = `${state.context.notes || ""}\n[Force-advanced after ${maxRounds} rounds, confidence sum ${scoreSum} < threshold ${state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD}]`;
+//   return advanceStep(state);
+// }
 
 export function failBackToDev(
   state: WorkflowState,
@@ -369,7 +509,7 @@ export function failBackToDev(
 
   const scoreSum =
     (state.context.devScore ?? 0) + Math.min(100, state.context.qaScore ?? 0);
-  const threshold = state.confidenceThreshold ?? 95;
+  const threshold = state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD;
 
   // Subtract rounds and check if we hit zero
   const prevToAdvance = (state as any).roundsToAdvance ?? 10;
@@ -379,11 +519,11 @@ export function failBackToDev(
     console.log(
       `[pworkflow] max iterations (${prevToAdvance}) reached after QA failure, pushing back to dev`,
     );
-    const phaseSteps = WORKFLOW_STEPS.filter((s) => s.phase === state.phase);
+    const phaseSteps = WORKFLOW_PHASES.filter((s) => s.phase === state.phase);
     const devSteps = phaseSteps.filter((s) => s.role === "dev");
     if (devSteps.length > 0) {
       const lastDevStep = devSteps[devSteps.length - 1];
-      state.stepIndex = WORKFLOW_STEPS.indexOf(lastDevStep);
+      state.stepIndex = WORKFLOW_PHASES.indexOf(lastDevStep);
     }
     state.role = "dev";
     state.status = "in_progress";
@@ -393,6 +533,16 @@ export function failBackToDev(
 
   (state as any).roundsToAdvance = newToAdvance;
   state.context.notes = `${state.context.notes || ""}\n[Round ${prevToAdvance}/${10}: confidence sum ${scoreSum} < threshold ${threshold}, QA pushed back]`;
+
+  // Push back to dev — find the last dev step in this phase
+  const phaseSteps = WORKFLOW_PHASES.filter((s) => s.phase === state.phase);
+  const devSteps = phaseSteps.filter((s) => s.role === "dev");
+  if (devSteps.length > 0) {
+    const lastDevStep = devSteps[devSteps.length - 1];
+    state.stepIndex = WORKFLOW_PHASES.indexOf(lastDevStep);
+  }
+  state.role = "dev";
+  state.status = "in_progress";
   writeState(state);
   return state;
 }
@@ -429,6 +579,20 @@ export function markFailed(
 export function markCompleted(state: WorkflowState): WorkflowState {
   state.status = "completed";
   state.context.notes = "Release completed successfully";
+  writeState(state);
+  return state;
+}
+
+/**
+ * Mark plan phase as complete (threshold met, ready to advance).
+ */
+export function markPlanPhaseComplete(state: WorkflowState): WorkflowState {
+  state.status = "in_progress";
+  state.phase = "build";
+  state.context.notes =
+    "Plan phase complete - score threshold met" +
+    `\nDev score: ${state.context.devScore ?? 0}` +
+    `\nQA score: ${state.context.qaScore ?? 0}`;
   writeState(state);
   return state;
 }

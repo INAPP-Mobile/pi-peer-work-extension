@@ -55,7 +55,6 @@ This:
 For each terminal session, set your role:
 
 ```bash
-export PWORKFLOW_ROLE=dev   # or qa
 pi
 ```
 
@@ -84,8 +83,6 @@ Shows current phase, step, and workflow state.
 2. **QA**: Confirm release is live and working
 
 ## Configuration
-
-No additional configuration required beyond setting `PWORKFLOW_ROLE`.
 
 ## License
 

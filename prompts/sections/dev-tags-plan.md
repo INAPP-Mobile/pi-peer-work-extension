@@ -1,0 +1,3 @@
+- Include [SUCCESS] to advance when score threshold met, [FAILURE] for feedback, or [BLOCKER] for blockers
+- Use [DEVSCORE:N] to self-score your plan quality (0-100)
+- After QA review, use [QA_SCORE:N] to score their feedback (0-100)
