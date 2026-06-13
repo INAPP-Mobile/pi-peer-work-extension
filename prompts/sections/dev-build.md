@@ -9,4 +9,5 @@
 3. **WRITE YOUR OUTPUT TO "./build-output.md"** (overwrite this file) — do not just output to chat
 4. When QA approves with a passing score, you will be asked to continue with the next subtask
 
-{{QA_FEEDBACK}}
+### 🔄 If Retrying After QA Review
+Read `./qa-review.md` to see QA's feedback on your previous attempt, then revise your work in `./build-output.md`.
