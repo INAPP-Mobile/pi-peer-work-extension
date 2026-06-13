@@ -113,8 +113,15 @@ export function buildDevTask(state: WorkflowState): string {
     });
     tagInstructions = DEV_TAGS_PLAN;
   } else if (isBuildPhase(state)) {
+    const qaFeedback = state.context?.qaFeedback
+      ? `
+### 🗒️ QA Feedback from Previous Review
+${state.context.qaFeedback}
+`
+      : "";
     phaseInstructions = fill(DEV_BUILD, {
       SUBTASK_CONTEXT: getBuildSubtaskContext(state),
+      QA_FEEDBACK: qaFeedback,
     });
     tagInstructions = DEV_TAGS_DEFAULT;
   } else {

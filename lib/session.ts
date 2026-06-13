@@ -97,6 +97,11 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
     state.context.lastAgentMessage =
       lastMsg.substring(0, 200) + (lastMsg.length > 200 ? "..." : "");
 
+    // Store full QA feedback when QA speaks, for dev retry context
+    if (state.role === "qa") {
+      state.context.qaFeedback = lastMsg;
+    }
+
     if (scores && scores.devScore !== undefined) {
       state.context.devScore = scores.devScore;
       scoreExists = true;
@@ -158,6 +163,7 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
           );
           state.context.devScore = 0;
           state.context.qaScore = 0;
+          delete state.context.qaFeedback;
           state.nextRole = "dev";
           ctx.ui.setFooter(buildFooter(ctx, () => "dev"));
           advanceSubtask(state);
@@ -177,10 +183,12 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
           }
           delete newState.currentSubtaskIndex;
           delete newState.subtasksCompleted;
+          delete newState.context.qaFeedback;
           state = newState;
         }
       } else {
         const newState = advancePhase(state);
+        if (newState) delete newState.context.qaFeedback;
         if (!newState) {
           ctx.ui.notify(`✅ [pworkflow] goal completed successfully!!`, "info");
           markCompleted(state);
