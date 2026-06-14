@@ -14,8 +14,7 @@ Step: {{STEP_DESCRIPTION}}
 
 {{SCORING_INSTRUCTIONS_SECTION}}
 ### ⚠️ STRICT FORMAT REQUIREMENT
-- Use `[DEVSCORE:N]` (no spaces, no underscores) for dev scores
-- Use `[QA_SCORE:N]` (exact) for QA scores
+- Use `[DEVSCORE:N]` (no spaces, no underscores) for your own Dev score
 - Scores outside this format will NOT be detected by the system
 
-If threshold is not met, you will be asked to reverify.
+If threshold is not met, you will be asked to revise.

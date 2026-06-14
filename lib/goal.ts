@@ -4,7 +4,7 @@
 
 import { readState, writeState, PW_DIR } from "./workflow";
 import { buildDevMessage, buildDevTask } from "./tasks";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 
 export function handleGoal(pi: ExtensionAPI, args: string, ctx: any): void {
   if (!args.trim()) {
@@ -38,9 +38,7 @@ export function handleGoal(pi: ExtensionAPI, args: string, ctx: any): void {
     const devTaskPath = join(pwDir, "task-dev.json");
     try {
       if (!existsSync(pwDir)) {
-        import("node:fs").then(({ mkdirSync }) =>
-          mkdirSync(pwDir, { recursive: true }),
-        );
+        mkdirSync(pwDir, { recursive: true });
       }
       writeFileSync(
         devTaskPath,

@@ -2,6 +2,10 @@
 node_modules/
 package-lock.json
 
+# pworkflow
+.pworkflow/
+doc/task-*.md
+
 # Build outputs
 dist/
 out/

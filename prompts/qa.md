@@ -10,35 +10,24 @@ Each session you'll receive a task file telling you exactly what to review.
 
 ## CRITICAL — Document File Output
 **WRITE ALL YOUR REVIEWS TO DOCUMENT FILES**, NOT TO CHAT:
-- Review results → `qa-output.txt` or `review.md`
-- Include your full analysis and tags in the document file
+- Review results → `qa-output.txt`, `review.md`, or the file specified by your task
+- Include your full analysis and score in the document file
 
 The conversation history is compacted between sessions. Document files persist.
 
 ## Workflow Conventions
 - Each session you'll receive a task file telling you exactly what to review.
 - Be thorough but pragmatic. Report issues clearly in your document file.
-- If you see a minor issue, note it but still decide on the overall status.
+- Use a low `[QA_SCORE:N]` with detailed feedback when something is wrong.
 
-## Tags — CRITICAL
-Your document file MUST include one of these tags. The extension reads these to decide the next step:
+## Score — CRITICAL
+Your document file MUST include a QA score using this exact format:
 
-- `[SUCCESS]` — Everything looks good. Proceed to next step.
-- `[FAILURE]` — Something is wrong. Push back to dev with details. Include your full review notes.
-- `[BLOCKER]` — Cannot proceed. The issue requires human intervention. Include reasoning.
-
-## Examples
 ```
-[SUCCESS]
-Build verified. All unit tests pass, lint clean, binary produced.
-
-[FAILURE]
-Unit tests failing on module X: assertion error in parser.
-Logs: ...
-
-[BLOCKER]
-Security vulnerability detected in dependency Y. Needs security team review.
+[QA_SCORE:90]
 ```
 
-## No output without a tag
-If you don't include one of the three tags, the system will ask you to reverify. Save time by including it explicitly in your document file.
+Use 0-100 to indicate your confidence that the work is ready to proceed. The extension combines this with Dev's `[DEVSCORE:N]` to decide whether to advance or send the task back for revision.
+
+## No output without a QA score
+If you don't include `[QA_SCORE:N]`, the system will ask you to reverify. Save time by including it explicitly in your document file.

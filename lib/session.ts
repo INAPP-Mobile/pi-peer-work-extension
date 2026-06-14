@@ -9,12 +9,17 @@ import {
   markCompleted,
   advancePhase,
   advanceSubtask,
+  failBackToDev,
+  markBlocked,
   clearTaskFile,
   getRoleModel,
   syncTaskFileMtime,
+  isDividePhase,
+  isBuildPhase,
 } from "./workflow";
 import { setupDebugLogging, debugLog } from "./logger";
-import { parseScores } from "./tags";
+import { parseWorkflowTags } from "./tags";
+import { notifyTelegram } from "./telegram";
 import {
   extractLastAgentMessage,
   extractLastAgentMessageFromMessage,
@@ -91,7 +96,7 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
 
     debugLog("[message_end] last Msg", lastMsg);
     var scoreExists = false;
-    const scores = parseScores(lastMsg);
+    const scores = parseWorkflowTags(lastMsg);
 
     // Store last message for error reporting
     state.context.lastAgentMessage =
@@ -136,9 +141,54 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
 
     debugLog(`[agent_end] turn_end: state.role=${state.role}`);
 
-    const scores = parseScores(lastMsg);
+    const parsed = parseWorkflowTags(lastMsg);
 
-    // In plan phase, require self-score from dev or review score from qa
+    if (parsed.statusTag === "BLOCKER") {
+      state.context.qaFeedback = lastMsg;
+      const blocked = markBlocked(
+        state,
+        `Blocked by ${state.role} — human intervention required.\n\n${lastMsg.substring(0, 800)}`,
+      );
+      writeState(blocked);
+      ctx.ui.notify(
+        `[pworkflow] workflow blocked. Notifying human via Telegram...`,
+        "warning",
+      );
+      const notification = await notifyTelegram(
+        `🚨 pworkflow blocked\nPhase: ${blocked.phase}\nRole: ${blocked.role}\n\n${lastMsg.substring(0, 1000)}`,
+      );
+      ctx.ui.notify(
+        notification.ok
+          ? "✅ Telegram notification sent."
+          : `⚠️ Telegram notification failed: ${notification.error}`,
+        notification.ok ? "info" : "warning",
+      );
+      return;
+    }
+
+    if (parsed.statusTag === "FAILURE" && state.role === "qa") {
+      state.context.qaFeedback = lastMsg;
+      state.context.qaScore = parsed.qaScore ?? 0;
+      state.context.devScore = parsed.devScore ?? state.context.devScore ?? 0;
+      const failed = failBackToDev(state, lastMsg);
+      failed.nextRole = "dev";
+      writeState(failed);
+      ctx.ui.notify(
+        `[pworkflow] QA found issues. Sending revision task to Dev.`,
+        "warning",
+      );
+      pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
+      return;
+    }
+
+    // Legacy [SUCCESS] without a QA score is treated as full QA confidence.
+    if (parsed.statusTag === "SUCCESS" && state.role === "qa" && parsed.qaScore === undefined) {
+      parsed.qaScore = 100;
+    }
+
+    const scores = parsed;
+
+    // In plan/divide/build/release, require self-score from dev or review score from QA.
     if (
       (state.role === "dev" && scores.devScore === undefined) ||
       (state.role === "qa" && scores.qaScore === undefined)
@@ -148,12 +198,25 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
       return;
     }
 
+    // Divide phase is a handoff from Dev-created subtasks to QA validation.
+    if (isDividePhase(state) && state.role === "dev" && scores.qaScore === undefined) {
+      debugLog(`[agent_end] divide phase dev handoff; waiting for QA review`);
+      state.nextRole = "qa";
+      writeState(state);
+      ctx.ui.notify(
+        `[pworkflow] dev has submitted subtasks. Switching to QA for review.`,
+        "info",
+      );
+      pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
+      return;
+    }
+
     const scoreSum =
       (state.context.devScore ?? 0) + (state.context.qaScore ?? 0);
     const threshold = state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD;
 
     if (scoreSum >= threshold) {
-      if (state.phase === "build" && getSubtaskOrder()) {
+      if (isBuildPhase(state) && getSubtaskOrder()) {
         const allSubtasks = getSubtaskOrder()!;
         const currentIdx = state.currentSubtaskIndex ?? 0;
 
@@ -164,8 +227,9 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
           state.context.devScore = 0;
           state.context.qaScore = 0;
           delete state.context.qaFeedback;
-          state.nextRole = "dev";
-          ctx.ui.setFooter(buildFooter(ctx, () => "dev"));
+          const nextRole = state.role === "dev" ? "qa" : "dev";
+          state.nextRole = nextRole;
+          ctx.ui.setFooter(buildFooter(ctx, () => nextRole));
           advanceSubtask(state);
           writeState(state);
         } else {
@@ -197,20 +261,30 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
         state = newState;
       }
 
-      ctx.ui.notify(
-        `[pworkflow] threshold met, advancing to next phase: ${state.phase} (${scoreSum} >= ${threshold})`,
-        "info",
-      );
-      debugLog(`[agent_end] 11 switching to dev role`);
-      writeState(state);
+      if (!isDividePhase(state) || state.context.qaScore !== undefined) {
+        state.nextRole = state.role === "dev" ? "qa" : "dev";
+        ctx.ui.notify(
+          `[pworkflow] threshold met, advancing to next phase: ${state.phase} (${scoreSum} >= ${threshold})`,
+          "info",
+        );
+        debugLog(`[agent_end] next role after compact will be ${state.nextRole}`);
+        writeState(state);
+
+        pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
+      }
     } else {
       ctx.ui.notify(
-        `[pworkflow] threshold NOT met, continue to revise (${scoreSum} < ${threshold})`,
+        `[pworkflow] threshold NOT met (${scoreSum} < ${threshold})`,
         "info",
       );
-    }
 
-    pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
+      // Dev revisions happen after QA feedback/low QA score. Otherwise Dev hands off to QA.
+      state.nextRole =
+        state.role === "qa" || state.context.qaScore !== undefined ? "dev" : "qa";
+      writeState(state);
+
+      pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
+    }
   });
 
   // ─── Session Shutdown ────────────────────────────────────────────

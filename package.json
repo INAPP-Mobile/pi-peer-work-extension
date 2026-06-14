@@ -1,6 +1,7 @@
 {
   "name": "@earendil-works/pi-peer-workflow",
   "version": "1.0.0",
+  "type": "module",
   "description": "Peer-to-peer async workflow pipeline (build → qa → release) for pi agent",
   "keywords": [
     "pi-package",
@@ -13,7 +14,8 @@
     "index.ts",
     "lib",
     "manifest.json",
-    "prompts"
+    "prompts",
+    "scripts"
   ],
   "repository": {
     "type": "git",
@@ -21,11 +23,11 @@
   },
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./lib/index.ts"
     ]
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node ./scripts/fix-esm-imports.cjs",
     "test": "node --test test/*.test.js"
   },
   "peerDependencies": {

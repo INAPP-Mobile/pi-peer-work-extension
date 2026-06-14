@@ -4,7 +4,7 @@
     "moduleResolution": "bundler",
     "target": "es2022",
     "outDir": "./lib",
-    "rootDir": ".",
+    "rootDir": "./lib",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
@@ -16,6 +16,12 @@
     "noUnusedParameters": false,
     "moduleDetection": "force"
   },
-  "include": ["*.ts"],
-  "exclude": ["node_modules", "lib"]
+  "include": ["lib/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "lib/**/*.map",
+    "lib/lib"
+  ]
 }

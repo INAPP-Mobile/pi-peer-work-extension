@@ -44,10 +44,11 @@ export function registerTools(pi: ExtensionAPI): void {
             });
             return;
           }
-          debugLog(`[compact] switching to ${state.nextRole}`);
+          const nextRole = state.nextRole ?? (state.role === "dev" ? "qa" : "dev");
+          debugLog(`[compact] switching to ${nextRole}`);
 
           clearTaskFile(state.role);
-          state.role = state.nextRole;
+          state.role = nextRole;
           state.nextRole = state.role === "dev" ? "qa" : "dev";
 
           writeTaskFile(

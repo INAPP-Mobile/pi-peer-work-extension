@@ -10,14 +10,13 @@ import { fileURLToPath } from "node:url";
 import {
   getCurrentStep,
   isPlanPhase,
+  isDividePhase,
   isBuildPhase,
   isReleasePhase,
   WorkflowState,
   DEFAULT_CONFIDENCE_THRESHOLD,
-  WORKFLOW_PHASES,
   PW_DIR,
   getSubtaskOrder,
-  writeTaskFile as wfWriteTaskFile,
 } from "./workflow";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -32,11 +31,14 @@ function load(path: string): string {
 const DEV_TASK_TMPL = load(join(PROMPTS_DIR, "dev-task.md"));
 const QA_TASK_TMPL = load(join(PROMPTS_DIR, "qa-task.md"));
 const DEV_PLAN = load(join(SECTIONS_DIR, "dev-plan.md"));
+const DEV_DIVIDE = load(join(SECTIONS_DIR, "dev-divide.md"));
 const DEV_BUILD = load(join(SECTIONS_DIR, "dev-build.md"));
 const DEV_RELEASE = load(join(SECTIONS_DIR, "dev-release.md"));
 const DEV_TAGS_PLAN = load(join(SECTIONS_DIR, "dev-tags-plan.md"));
 const DEV_TAGS_DEFAULT = load(join(SECTIONS_DIR, "dev-tags-default.md"));
+const DEV_SCORING = load(join(SECTIONS_DIR, "dev-scoring.md"));
 const QA_PLAN = load(join(SECTIONS_DIR, "qa-plan.md"));
+const QA_DIVIDE = load(join(SECTIONS_DIR, "qa-divide.md"));
 const QA_BUILD = load(join(SECTIONS_DIR, "qa-build.md"));
 const QA_RELEASE = load(join(SECTIONS_DIR, "qa-release.md"));
 const QA_SCORING = load(join(SECTIONS_DIR, "qa-scoring.md"));
@@ -103,6 +105,7 @@ export function buildDevTask(state: WorkflowState): string {
     : "";
 
   let phaseInstructions: string;
+  let scoringInstructions: string;
   let tagInstructions: string;
 
   if (isPlanPhase(state)) {
@@ -112,14 +115,37 @@ export function buildDevTask(state: WorkflowState): string {
       ),
     });
     tagInstructions = DEV_TAGS_PLAN;
+    scoringInstructions = fill(DEV_SCORING, {
+      CONFIDENCE_THRESHOLD: String(
+        state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+      ),
+    });
+  } else if (state.phase === "divide") {
+    phaseInstructions = DEV_DIVIDE;
+    tagInstructions = DEV_TAGS_DEFAULT;
+    scoringInstructions = fill(DEV_SCORING, {
+      CONFIDENCE_THRESHOLD: String(
+        state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+      ),
+    });
   } else if (isBuildPhase(state)) {
     phaseInstructions = fill(DEV_BUILD, {
       SUBTASK_CONTEXT: getBuildSubtaskContext(state),
     });
     tagInstructions = DEV_TAGS_DEFAULT;
+    scoringInstructions = fill(DEV_SCORING, {
+      CONFIDENCE_THRESHOLD: String(
+        state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+      ),
+    });
   } else {
     phaseInstructions = DEV_RELEASE;
     tagInstructions = DEV_TAGS_DEFAULT;
+    scoringInstructions = fill(DEV_SCORING, {
+      CONFIDENCE_THRESHOLD: String(
+        state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+      ),
+    });
   }
 
   return fill(DEV_TASK_TMPL, {
@@ -127,6 +153,7 @@ export function buildDevTask(state: WorkflowState): string {
     STEP_DESCRIPTION: step.description,
     GOAL_SECTION: goalSection,
     PHASE_INSTRUCTIONS_SECTION: phaseInstructions,
+    SCORING_INSTRUCTIONS_SECTION: scoringInstructions,
     TAG_INSTRUCTIONS_SECTION: tagInstructions,
   });
 }
@@ -152,13 +179,29 @@ export function buildQaTask(state: WorkflowState): string {
       ),
     });
     tagInstructions = QA_TAGS;
+  } else if (isDividePhase(state)) {
+    phaseInstructions = QA_DIVIDE;
+    scoringInstructions = fill(QA_SCORING, {
+      CONFIDENCE_THRESHOLD: String(
+        state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+      ),
+    });
+    tagInstructions = QA_TAGS;
   } else if (isBuildPhase(state)) {
     phaseInstructions = QA_BUILD;
-    scoringInstructions = "";
+    scoringInstructions = fill(QA_SCORING, {
+      CONFIDENCE_THRESHOLD: String(
+        state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+      ),
+    });
     tagInstructions = QA_TAGS;
   } else {
     phaseInstructions = QA_RELEASE;
-    scoringInstructions = "";
+    scoringInstructions = fill(QA_SCORING, {
+      CONFIDENCE_THRESHOLD: String(
+        state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD,
+      ),
+    });
     tagInstructions = QA_TAGS;
   }
 
@@ -172,8 +215,8 @@ export function buildQaTask(state: WorkflowState): string {
   });
 }
 
-/** Build a re-verify task (no tag was detected in QA's last response). */
+/** Build a re-verify task (no required score tag was detected in QA's last response). */
 export function buildReverifyTask(state: WorkflowState): string {
   const task = buildQaTask(state);
-  return `## ⚠️ Re-verification Required\n\nNo status tag ([SUCCESS], [FAILURE], or [BLOCKER]) was detected in your previous response.\n\nPlease review the artifacts again and include ONE of the required tags in your response.\n\n${task}`;
+  return `## ⚠️ Re-verification Required\n\nNo required score tag was detected in your previous response.\n\nPlease review the artifacts again and include \`[QA_SCORE:N]\` in your response.\n\n${task}`;
 }

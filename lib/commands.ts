@@ -2,7 +2,6 @@
 //
 // Command entry points (registerCommand handlers).
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   existsSync,
   readFileSync,
@@ -10,56 +9,126 @@ import {
   unlinkSync,
   readdirSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import {
   initState,
   resetState,
-  WorkflowState,
   readState,
-  getRoleModel,
+  getCurrentStep,
+  WORKFLOW_PHASES,
 } from "./workflow";
-import { debugLog } from "./logger";
-import { buildDevTask, buildQaMessage } from "./tasks";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const GITIGNORE_ENTRIES = [".pworkflow/"];
 
-/**
- * Initialize workflow: reset state, copy .gitignore-template, clean stale files.
- */
-export function handleInit(ctx: any): void {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
+const STALE_PWORKFLOW_FILES = [
+  "task-dev.json",
+  "task-qa.json",
+  "task-order.json",
+  "git-init.log",
+];
 
-  initState();
+const STALE_ROOT_FILES = [
+  "plan.md",
+  "qa-review.md",
+  "build-output.md",
+  "release-output.md",
+];
 
-  // Copy .gitignore-template over .gitignore (overwrite)
-  const templatePath = join(__dirname, "..", ".gitignore-template");
+function hasGitignoreEntry(current: string, entry: string): boolean {
+  return current
+    .split(/\r?\n/)
+    .some((line) => line.trim() === entry);
+}
+
+function ensureGitignoreEntries(): void {
   const gitignorePath = join(process.cwd(), ".gitignore");
-  const templateContent = readFileSync(templatePath, "utf-8");
-  writeFileSync(gitignorePath, templateContent, "utf-8");
+  const current = existsSync(gitignorePath)
+    ? readFileSync(gitignorePath, "utf-8")
+    : "";
+  const missing = GITIGNORE_ENTRIES.filter(
+    (entry) => !hasGitignoreEntry(current, entry),
+  );
+  if (missing.length > 0) {
+    writeFileSync(
+      gitignorePath,
+      `${current.trimEnd()}
 
-  // Remove all stale workflow files
+# pworkflow
+${missing.join("\n")}
+`,
+      "utf-8",
+    );
+  }
+}
+
+function cleanupWorkflowArtifacts(): void {
   const pwDir = join(process.cwd(), ".pworkflow");
-  if (existsSync(pwDir)) {
-    const staleFiles = ["task-dev.json", "task-qa.json", "git-init.log"];
-    for (const f of staleFiles) {
-      const fp = join(pwDir, f);
-      if (existsSync(fp)) unlinkSync(fp);
+  for (const f of STALE_PWORKFLOW_FILES) {
+    const fp = join(pwDir, f);
+    if (existsSync(fp)) {
+      try {
+        unlinkSync(fp);
+      } catch {}
     }
-    // Also remove any archived debug logs or old state backups (but keep fresh state.json)
+  }
+
+  for (const f of STALE_ROOT_FILES) {
+    const fp = join(process.cwd(), f);
+    if (existsSync(fp)) {
+      try {
+        unlinkSync(fp);
+      } catch {}
+    }
+  }
+
+  if (existsSync(pwDir)) {
     for (const f of readdirSync(pwDir)) {
-      if (f === "state.json") continue;
+      if (f === "state.json" || f === "settings.json") continue;
       if (f.startsWith("debug.log") || f.startsWith("state.")) {
         const fp = join(pwDir, f);
-        if (existsSync(fp)) unlinkSync(fp);
+        try {
+          unlinkSync(fp);
+        } catch {}
       }
     }
   }
 
+  const legacyDir = join(pwDir, ".pworkflow");
+  if (existsSync(legacyDir)) {
+    for (const f of readdirSync(legacyDir)) {
+      if (f === "state.json" || f === "settings.json") continue;
+      const fp = join(legacyDir, f);
+      try {
+        unlinkSync(fp);
+      } catch {}
+    }
+  }
+
+  const docDir = join(process.cwd(), "doc");
+  if (existsSync(docDir)) {
+    for (const f of readdirSync(docDir)) {
+      if (!/^task-\d+\.md$/.test(f)) continue;
+      const fp = join(docDir, f);
+      try {
+        unlinkSync(fp);
+      } catch {}
+    }
+  }
+}
+
+/**
+ * Initialize workflow: reset state, ensure .gitignore entries, clean stale files.
+ */
+export function handleInit(ctx: any): void {
+  initState();
+
+  ensureGitignoreEntries();
+  cleanupWorkflowArtifacts();
+
   ctx.ui.notify(
     `✅ Peer workflow initialised.\n` +
-      `Phase: PLAN\nStep: dev plans\n.gitignore written from template.`,
+      `Phase: PLAN\nStep: dev plans\n.gitignore entries ensured; stale workflow artifacts cleared.`,
     "info",
   );
 }
@@ -71,8 +140,7 @@ export function handleStatus(ctx: any): void {
     ctx.ui.notify("No active workflow. Run /pworkflow-init first.", "warning");
     return;
   }
-  // Import helper functions from workflow.ts dynamically
-  const { getCurrentStep, WORKFLOW_PHASES } = require("./workflow") as any;
+  // Helpers are imported statically from workflow.ts.
   const step = getCurrentStep(state);
   ctx.ui.notify(
     `📋 Workflow Status\n` +
@@ -88,8 +156,9 @@ export function handleStatus(ctx: any): void {
 /** Reset workflow state and role. */
 export function handleReset(ctx: any): void {
   resetState();
+  cleanupWorkflowArtifacts();
   ctx.ui.notify(
-    "✅ Workflow state and role cleared. Run /pworkflow-init and /pworkflow-role to start fresh.",
+    "✅ Workflow state and role cleared. Run /pworkflow-init and /pworkflow-role to start fresh.\nStale workflow artifacts cleared.",
     "info",
   );
 }

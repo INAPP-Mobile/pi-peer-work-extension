@@ -12,8 +12,7 @@ will be FAILED and sent back to plan again. Only text-based plans are accepted r
 3. Identify potential risks and mitigation strategies
 4. **WRITE YOUR PLAN TO "./plan.md"** (overwrite this file) — do not just output to chat
 5. Include `[DEVSCORE:N]` tag (0-100) indicating your confidence in the plan
-6. After QA reviews, include `[QA_SCORE:N]` tag (0-100) scoring QA's review
-7. Iterate until combined score >= threshold (`{{CONFIDENCE_THRESHOLD}}`)
+6. Iterate until combined score >= threshold (`{{CONFIDENCE_THRESHOLD}}`)
 
 ### 🔄 If Retrying After QA Review
 Read `./qa-review.md` to see QA's feedback on your previous attempt, then revise your plan in `./plan.md`.

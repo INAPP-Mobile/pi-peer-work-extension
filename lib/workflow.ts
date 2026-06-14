@@ -4,11 +4,11 @@
 //   BUILD  phase: dev builds → qa reviews
 //   RELEASE phase: dev deploys+publishes → qa confirms
 //
-// Flow decisions based on QA's output tags:
-//   [SUCCESS] → advance to next step / complete
-//   [FAILURE] → push back to dev with QA feedback
+// Flow decisions based on parsed scores and legacy status tags:
+//   high combined score → advance to next step / complete
+//   [FAILURE] from QA → push back to dev with QA feedback
 //   [BLOCKER] → escalate to human via Telegram
-//   no tag    → reverify (rerun QA)
+//   low combined score → current role revises or hands off for review
 
 import {
   readFileSync,
@@ -18,6 +18,7 @@ import {
   mkdirSync,
   unlinkSync,
   statSync,
+  readdirSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -120,7 +121,6 @@ export const GITIGNORE_CONTENT = [
   .pworkflow/task-*.json
 `,
 ].join("\n");
-() => PW_DIR();
 
 function ensureDir(): void {
   const dir = PW_DIR();
@@ -133,29 +133,43 @@ function ensureDir(): void {
 
 const STATE_FILE = "state.json";
 
-// Old broken path from prior versions — migrate on read
-// Bug: readState/writeState used join(PW_DIR(), ".pworkflow/*") = .pworkflow/.pworkflow/*
-function oldStatePath(): string {
-  return join(PW_DIR(), ".pworkflow", "*");
+function legacyStateCandidates(): string[] {
+  const nestedDir = join(PW_DIR(), ".pworkflow");
+  const candidates = [join(nestedDir, STATE_FILE)];
+
+  if (!existsSync(nestedDir)) return candidates;
+
+  try {
+    for (const name of readdirSync(nestedDir)) {
+      if (/^state.*\.json$/.test(name)) {
+        candidates.push(join(nestedDir, name));
+      }
+    }
+  } catch {}
+
+  return candidates;
+}
+
+function migrateLegacyState(): WorkflowState | null {
+  for (const path of legacyStateCandidates()) {
+    if (!existsSync(path)) continue;
+    try {
+      const data = readFileSync(path, "utf-8");
+      const state = JSON.parse(data) as WorkflowState;
+      writeState(state);
+      try {
+        unlinkSync(path);
+      } catch {}
+      return state;
+    } catch {}
+  }
+  return null;
 }
 
 export function readState(): WorkflowState | null {
   const path = join(PW_DIR(), STATE_FILE);
   if (!existsSync(path)) {
-    // Migrate state from old broken path (.pworkflow/.pworkflow/*)
-    const oldPath = oldStatePath();
-    if (existsSync(oldPath)) {
-      try {
-        const data = readFileSync(oldPath, "utf-8");
-        const state = JSON.parse(data) as WorkflowState;
-        writeState(state); // write to new correct path
-        try {
-          unlinkSync(oldPath);
-        } catch {} // remove old
-        return state;
-      } catch {}
-    }
-    return null;
+    return migrateLegacyState();
   }
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
@@ -282,7 +296,7 @@ export function resetState(): void {
       devTaskFile: join(pwDir, "task-dev.json"),
       qaTaskFile: join(pwDir, "task-qa.json"),
       confidenceThreshold: DEFAULT_CONFIDENCE_THRESHOLD,
-      roundsToAdvance: 10,
+      roundsToAdvance: DEFAULT_ROUND_TO_ADVANCE,
       roleModels,
       context,
     };
@@ -306,6 +320,10 @@ export function isQaTurn(state: WorkflowState): boolean {
 
 export function isPlanPhase(state: WorkflowState): boolean {
   return state.phase === "plan";
+}
+
+export function isDividePhase(state: WorkflowState): boolean {
+  return state.phase === "divide";
 }
 
 export function isBuildPhase(state: WorkflowState): boolean {
@@ -356,11 +374,13 @@ export function advancePhase(state: WorkflowState): WorkflowState | null {
     state.phase = newPhase;
     state.status = "in_progress";
     state.roundsToAdvance = DEFAULT_ROUND_TO_ADVANCE;
-    state.nextRole = "dev";
+    // nextRole is set by compact handler for role switching after compaction
+    // don't modify it here as it would override the intended flow
+    // also clear scores for new phase
     state.context.devScore = 0;
     state.context.qaScore = 0;
 
-    debugLog(`[advancePhase] switching to dev role`);
+    debugLog(`[advancePhase] phase advanced to ${state.phase}, role remains ${state.role}`);
     writeState(state);
   } else {
     return null;
@@ -387,6 +407,7 @@ export function failBackToDev(
       `[pworkflow] max iterations (${prevToAdvance}) reached after QA failure, pushing back to dev`,
     );
     state.role = "dev";
+    state.nextRole = "dev";
     debugLog(`[fallBackToDev] 11 switching to dev role`);
     state.status = "in_progress";
     writeState(state);
@@ -398,6 +419,7 @@ export function failBackToDev(
 
   // Push back to dev — reset step index to start of phase and set role to dev
   state.role = "dev";
+  state.nextRole = "dev";
   debugLog(`[fallBackToDev] 22 switching to dev role`);
   state.status = "in_progress";
   writeState(state);
@@ -508,8 +530,8 @@ export function advanceSubtask(state: WorkflowState): boolean {
   }
 
   state.currentSubtaskIndex = newIndex;
-  state.nextRole = "dev";
-  debugLog(`[advanceSubtask] switching to dev role`);
+  state.nextRole = state.role === "dev" ? "qa" : "dev";
+  debugLog(`[advanceSubtask] next role is ${state.nextRole}`);
   writeState(state);
   return true; // more subtasks to do
 }

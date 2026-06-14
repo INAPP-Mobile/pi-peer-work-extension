@@ -49,7 +49,7 @@ Given a QA reviewer's output for any phase (plan review, build review, or releas
 
 Respond with one word only: PASS or REJECT.
 
-PASS = output contains any of: specific feedback on the work, identified issues, approval reasoning, scoring, detailed analysis, specific concerns, or actionable next steps. Output may include tags like [SUCCESS], [FAILURE], [BLOCKER].
+PASS = output contains any of: specific feedback on the work, identified issues, approval reasoning, QA scoring, detailed analysis, specific concerns, or actionable next steps. Output may include [QA_SCORE:N].
 
 REJECT = output is too brief (just "looks good", "approved" without reasoning), just asks questions without providing review, is clearly a template/placeholder, or doesn't engage with the actual work product.`;
 
