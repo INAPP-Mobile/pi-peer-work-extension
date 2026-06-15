@@ -16,8 +16,10 @@ import {
   resetState,
   readState,
   getCurrentStep,
-  WORKFLOW_PHASES,
+  WORKFLOW_STEPS,
+  WorkflowState,
 } from "./workflow";
+import { renderArtifactContractSection } from "./tasks";
 
 const GITIGNORE_ENTRIES = [".pworkflow/"];
 
@@ -30,6 +32,7 @@ const STALE_PWORKFLOW_FILES = [
 
 const STALE_ROOT_FILES = [
   "plan.md",
+  "response.md",
   "qa-review.md",
   "build-output.md",
   "release-output.md",
@@ -117,18 +120,30 @@ function cleanupWorkflowArtifacts(): void {
   }
 }
 
+function formatArtifactContract(state: WorkflowState): string {
+  const section = renderArtifactContractSection(
+    getCurrentStep(state),
+    state.confidenceThreshold,
+  );
+
+  return section
+    .split("\n")
+    .map((line) => (line.startsWith("###") ? line.replace("### ", "") : line))
+    .join("\n");
+}
+
 /**
  * Initialize workflow: reset state, ensure .gitignore entries, clean stale files.
  */
 export function handleInit(ctx: any): void {
-  initState();
+  const state = initState();
 
   ensureGitignoreEntries();
   cleanupWorkflowArtifacts();
 
   ctx.ui.notify(
     `✅ Peer workflow initialised.\n` +
-      `Phase: PLAN\nStep: dev plans\n.gitignore entries ensured; stale workflow artifacts cleared.`,
+      `Step: ${state.currentStepId}\nRole: ${state.role}\n.gitignore entries ensured; stale workflow artifacts cleared.`,
     "info",
   );
 }
@@ -140,14 +155,17 @@ export function handleStatus(ctx: any): void {
     ctx.ui.notify("No active workflow. Run /pworkflow-init first.", "warning");
     return;
   }
-  // Helpers are imported statically from workflow.ts.
+
   const step = getCurrentStep(state);
   ctx.ui.notify(
     `📋 Workflow Status\n` +
-      `Phase: ${state.phase.toUpperCase()}\n` +
+      `Step Group: ${step.phase.toUpperCase()}\n` +
+      `Current Step: ${step.id} (${step.name})\n` +
+      `Role: ${state.role}\n` +
+      `Next Role: ${state.nextRole}\n` +
       `Status: ${state.status}\n` +
-      `Current Step: ${step.description}\n` +
-      `Step Index: ${state.stepIndex}/${WORKFLOW_PHASES.length - 1}\n` +
+      `Step Index: ${state.stepIndex}/${WORKFLOW_STEPS.length - 1}\n` +
+      `Input/Output Artifacts:\n${formatArtifactContract(state)}\n` +
       `Started: ${new Date(state.startedAt).toISOString()}`,
     "info",
   );

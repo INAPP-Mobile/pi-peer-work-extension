@@ -2,9 +2,9 @@
 //
 // /pworkflow-goal command implementation.
 
-import { readState, writeState, PW_DIR } from "./workflow";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readState, writeState, writeTaskFile, syncTaskFileMtime } from "./workflow";
 import { buildDevMessage, buildDevTask } from "./tasks";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 
 export function handleGoal(pi: ExtensionAPI, args: string, ctx: any): void {
   if (!args.trim()) {
@@ -32,28 +32,14 @@ export function handleGoal(pi: ExtensionAPI, args: string, ctx: any): void {
 
   ctx.ui.notify(`✅ Project goal set.`, "info");
 
-  // If it's dev's turn, inject updated task with the goal
+  // If it's dev's turn, inject updated task with the goal.
   if (state.role === "dev") {
-    const pwDir = PW_DIR();
-    const devTaskPath = join(pwDir, "task-dev.json");
     try {
-      if (!existsSync(pwDir)) {
-        mkdirSync(pwDir, { recursive: true });
-      }
-      writeFileSync(
-        devTaskPath,
-        JSON.stringify(
-          { task: buildDevTask(state), assignedAt: Date.now() },
-          null,
-          2,
-        ),
-      );
+      writeTaskFile("dev", buildDevTask(state));
+      syncTaskFileMtime("dev");
       pi.sendUserMessage(buildDevMessage(), { deliverAs: "followUp" });
     } catch (e) {
       ctx.ui.notify(`⚠️ Failed to update dev task: ${e}`, "warning");
     }
   }
 }
-
-import { join } from "node:path";
-import { ExtensionAPI } from "@earendil-works/pi-coding-agent";

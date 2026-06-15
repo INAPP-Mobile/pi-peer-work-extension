@@ -1,9 +1,8 @@
 /**
  * Peer Workflow Extension — async build/release pipeline between dev and qa.
  *
- * Two-phase workflow:
- *   BUILD  → dev builds → qa reviews  → high scores → RELEASE
- *   RELEASE → dev deploys+publishes → qa confirms → high scores → done
+ * Step-driven workflow:
+ *   each step owns role handoff, artifacts, scores, and optional subtask behavior
  *
  * Entry point — wires together sub-modules and registers pi hooks.
  */

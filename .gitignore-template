@@ -5,6 +5,11 @@ package-lock.json
 # pworkflow
 .pworkflow/
 doc/task-*.md
+plan.md
+response.md
+qa-review.md
+build-output.md
+release-output.md
 
 # Build outputs
 dist/

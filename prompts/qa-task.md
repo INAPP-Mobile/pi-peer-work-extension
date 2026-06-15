@@ -1,20 +1,20 @@
-## {{PHASE}} Phase — QA Task
+## Step {{STEP_ID}} — QA Task
 
-Step: {{STEP_DESCRIPTION}}
+Current step: {{STEP_NAME}}
+Role: QA
 
 {{GOAL_SECTION}}
-{{PHASE_INSTRUCTIONS_SECTION}}
+{{STEP_INSTRUCTIONS_SECTION}}
+
+{{ARTIFACT_CONTRACT_SECTION}}
+{{SUBTASK_CONTEXT_SECTION}}
 
 ### ⚠️ CRITICAL DIRECTIONS
-- Read the dev's previous response from document files
-- **DO NOT** write files in `.pworkflow/` — that folder is for workflow metadata only
-- **DO NOT** read `.pworkflow/state.json` or `.pworkflow/debug.log` — those are workflow internals
-- DO NOT mention or reference `.pworkflow/` in your responses
-- **WRITE YOUR REVIEW TO A DOCUMENT FILE** - do not just output to chat
+- Read the input artifacts listed above before reviewing.
+- **DO NOT** write files in `.pworkflow/` unless an output artifact above explicitly requires it.
+- **DO NOT** read `.pworkflow/state.json` or `.pworkflow/debug.log` — those are workflow internals.
+- DO NOT mention or reference `.pworkflow/` in your responses.
+- **WRITE YOUR REVIEW TO THE OUTPUT ARTIFACT(S) ABOVE** — do not just output to chat.
 
 {{SCORING_INSTRUCTIONS_SECTION}}
-### ⚠️ STRICT FORMAT REQUIREMENT
-- Use `[QA_SCORE:N]` (exact) for your QA review score
-- Scores outside this format will NOT be detected by the system
-
-If threshold is not met, Dev will revise.
+{{TAG_INSTRUCTIONS_SECTION}}

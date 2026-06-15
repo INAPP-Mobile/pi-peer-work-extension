@@ -1,8 +1,8 @@
 // ─── Score and Status Parsing ───────────────────────────────────────────
 //
 // Parse [DEVSCORE:N] and [QA_SCORE:N] scores from agent messages.
-// Legacy status tags are parsed for escalation/fallback behavior:
-//   - [FAILURE] -> push back to dev with QA feedback
+// Legacy status tags are parsed for escalation/status behavior:
+//   - [FAILURE] -> low QA score; normal threshold flow routes next turn to Dev
 //   - [BLOCKER] -> mark workflow blocked and notify human/Telegram
 
 export type ScoreResult = {

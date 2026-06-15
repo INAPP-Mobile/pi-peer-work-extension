@@ -1,21 +1,19 @@
 // ─── Session Event Handlers ──────────────────────────────────────────────
 //
 // pi.on("session_start"), pi.on("message_end"), pi.on("agent_end") handlers.
+// agent_end delegates flow decisions to the workflow engine.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-  readState,
-  writeState,
-  markCompleted,
-  advancePhase,
-  advanceSubtask,
-  failBackToDev,
-  markBlocked,
-  clearTaskFile,
+  applyTransition,
+  getCurrentStep,
   getRoleModel,
+  readState,
+  resolveTransition,
   syncTaskFileMtime,
-  isDividePhase,
-  isBuildPhase,
+  writeState,
+  writeTaskFile,
+  WorkflowState,
 } from "./workflow";
 import { setupDebugLogging, debugLog } from "./logger";
 import { parseWorkflowTags } from "./tags";
@@ -26,6 +24,7 @@ import {
   buildFooter,
   detectRole,
 } from "./ui";
+import { buildDevTask, buildQaTask } from "./tasks";
 
 export function registerSessionHandlers(pi: ExtensionAPI): void {
   // ─── Session Start ────────────────────────────────────────────────
@@ -85,51 +84,42 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
   });
 
   // ─── message end ─────────────────────────────────────────────────────
-  pi.on("message_end", async (event, ctx) => {
-    var state = readState();
+  pi.on("message_end", async (event, _ctx) => {
+    const state = readState();
     if (state == null || !state.role) return;
 
-    let lastMsg = extractLastAgentMessageFromMessage(event.message);
-    if (!lastMsg) {
-      return;
-    }
+    const lastMsg = extractLastAgentMessageFromMessage(event.message);
+    if (!lastMsg) return;
 
     debugLog("[message_end] last Msg", lastMsg);
-    var scoreExists = false;
     const scores = parseWorkflowTags(lastMsg);
 
-    // Store last message for error reporting
+    // Store only navigation metadata and scores. Artifact content stays in files.
     state.context.lastAgentMessage =
       lastMsg.substring(0, 200) + (lastMsg.length > 200 ? "..." : "");
 
-    // Store full QA feedback when QA speaks, for dev retry context
-    if (state.role === "qa") {
-      state.context.qaFeedback = lastMsg;
-    }
-
     if (scores && scores.devScore !== undefined) {
       state.context.devScore = scores.devScore;
-      scoreExists = true;
     }
     if (scores && scores.qaScore !== undefined) {
       state.context.qaScore = scores.qaScore;
-      scoreExists = true;
     }
 
-    if (!scoreExists) {
+    if (scores.devScore === undefined && scores.qaScore === undefined) {
       debugLog("[message_end] No score found in message");
       return;
     }
+
     debugLog("[message_end] Score found in message", scores);
     writeState(state);
   });
 
   // ─── Agent End ────────────────────────────────────────────────────
   pi.on("agent_end", async (event, ctx) => {
-    var state = readState();
+    const state = readState();
     if (!state || !state.role) return;
 
-    let lastMsg = extractLastAgentMessage(event);
+    const lastMsg = extractLastAgentMessage(event);
 
     const errorEvent = event as any;
     const errorMessage = errorEvent?.errorMessage;
@@ -142,20 +132,27 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
     debugLog(`[agent_end] turn_end: state.role=${state.role}`);
 
     const parsed = parseWorkflowTags(lastMsg);
+    const transition = resolveTransition(state, {
+      ...parsed,
+      rawMessage: lastMsg,
+    });
 
-    if (parsed.statusTag === "BLOCKER") {
-      state.context.qaFeedback = lastMsg;
-      const blocked = markBlocked(
-        state,
-        `Blocked by ${state.role} — human intervention required.\n\n${lastMsg.substring(0, 800)}`,
-      );
-      writeState(blocked);
+    if (transition.type === "reinject-current-step") {
+      debugLog(`[agent_end] ${transition.reason}`);
+      applyTransition(state, transition);
+      reinjectTask(pi, state);
+      return;
+    }
+
+    applyTransition(state, transition);
+
+    if (transition.type === "blocked") {
       ctx.ui.notify(
         `[pworkflow] workflow blocked. Notifying human via Telegram...`,
         "warning",
       );
       const notification = await notifyTelegram(
-        `🚨 pworkflow blocked\nPhase: ${blocked.phase}\nRole: ${blocked.role}\n\n${lastMsg.substring(0, 1000)}`,
+        `🚨 pworkflow blocked\nStep: ${transition.step.id}\nRole: ${state.role}\n\n${lastMsg.substring(0, 1000)}`,
       );
       ctx.ui.notify(
         notification.ok
@@ -166,125 +163,17 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
       return;
     }
 
-    if (parsed.statusTag === "FAILURE" && state.role === "qa") {
-      state.context.qaFeedback = lastMsg;
-      state.context.qaScore = parsed.qaScore ?? 0;
-      state.context.devScore = parsed.devScore ?? state.context.devScore ?? 0;
-      const failed = failBackToDev(state, lastMsg);
-      failed.nextRole = "dev";
-      writeState(failed);
-      ctx.ui.notify(
-        `[pworkflow] QA found issues. Sending revision task to Dev.`,
-        "warning",
-      );
-      pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
+    if (transition.type === "complete") {
+      ctx.ui.notify(`✅ [pworkflow] ${transition.message}`, "info");
       return;
     }
 
-    // Legacy [SUCCESS] without a QA score is treated as full QA confidence.
-    if (parsed.statusTag === "SUCCESS" && state.role === "qa" && parsed.qaScore === undefined) {
-      parsed.qaScore = 100;
-    }
+    const nextRole = transition.nextRole;
+    ctx.ui.setFooter(buildFooter(ctx, () => nextRole));
+    ctx.ui.notify(`[pworkflow] ${transition.message}`, "info");
+    debugLog(`[agent_end] next role after compact will be ${nextRole}`);
 
-    const scores = parsed;
-
-    // In plan/divide/build/release, require self-score from dev or review score from QA.
-    if (
-      (state.role === "dev" && scores.devScore === undefined) ||
-      (state.role === "qa" && scores.qaScore === undefined)
-    ) {
-      debugLog(`[agent_end] missing required score: ${state.role}`);
-      reinjectTask(pi, state);
-      return;
-    }
-
-    // Divide phase is a handoff from Dev-created subtasks to QA validation.
-    if (isDividePhase(state) && state.role === "dev" && scores.qaScore === undefined) {
-      debugLog(`[agent_end] divide phase dev handoff; waiting for QA review`);
-      state.nextRole = "qa";
-      writeState(state);
-      ctx.ui.notify(
-        `[pworkflow] dev has submitted subtasks. Switching to QA for review.`,
-        "info",
-      );
-      pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
-      return;
-    }
-
-    const scoreSum =
-      (state.context.devScore ?? 0) + (state.context.qaScore ?? 0);
-    const threshold = state.confidenceThreshold ?? DEFAULT_CONFIDENCE_THRESHOLD;
-
-    if (scoreSum >= threshold) {
-      if (isBuildPhase(state) && getSubtaskOrder()) {
-        const allSubtasks = getSubtaskOrder()!;
-        const currentIdx = state.currentSubtaskIndex ?? 0;
-
-        if (currentIdx + 1 < allSubtasks.length) {
-          debugLog(
-            `[agent_end] build subtask ${currentIdx} complete, advancing to next`,
-          );
-          state.context.devScore = 0;
-          state.context.qaScore = 0;
-          delete state.context.qaFeedback;
-          const nextRole = state.role === "dev" ? "qa" : "dev";
-          state.nextRole = nextRole;
-          ctx.ui.setFooter(buildFooter(ctx, () => nextRole));
-          advanceSubtask(state);
-          writeState(state);
-        } else {
-          debugLog(
-            `[agent_end] all build subtasks complete, advancing to release`,
-          );
-          const newState = advancePhase(state);
-          if (!newState) {
-            ctx.ui.notify(
-              `✅ [pworkflow] goal completed successfully!!`,
-              "info",
-            );
-            markCompleted(state);
-            return;
-          }
-          delete newState.currentSubtaskIndex;
-          delete newState.subtasksCompleted;
-          delete newState.context.qaFeedback;
-          state = newState;
-        }
-      } else {
-        const newState = advancePhase(state);
-        if (newState) delete newState.context.qaFeedback;
-        if (!newState) {
-          ctx.ui.notify(`✅ [pworkflow] goal completed successfully!!`, "info");
-          markCompleted(state);
-          return;
-        }
-        state = newState;
-      }
-
-      if (!isDividePhase(state) || state.context.qaScore !== undefined) {
-        state.nextRole = state.role === "dev" ? "qa" : "dev";
-        ctx.ui.notify(
-          `[pworkflow] threshold met, advancing to next phase: ${state.phase} (${scoreSum} >= ${threshold})`,
-          "info",
-        );
-        debugLog(`[agent_end] next role after compact will be ${state.nextRole}`);
-        writeState(state);
-
-        pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
-      }
-    } else {
-      ctx.ui.notify(
-        `[pworkflow] threshold NOT met (${scoreSum} < ${threshold})`,
-        "info",
-      );
-
-      // Dev revisions happen after QA feedback/low QA score. Otherwise Dev hands off to QA.
-      state.nextRole =
-        state.role === "qa" || state.context.qaScore !== undefined ? "dev" : "qa";
-      writeState(state);
-
-      pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
-    }
+    pi.sendUserMessage("run pworkflow-compact", { deliverAs: "followUp" });
   });
 
   // ─── Session Shutdown ────────────────────────────────────────────
@@ -293,50 +182,17 @@ export function registerSessionHandlers(pi: ExtensionAPI): void {
   });
 }
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { DEFAULT_CONFIDENCE_THRESHOLD } from "./workflow";
-import { buildDevTask, buildQaTask } from "./tasks";
-function reinjectTask(pi: ExtensionAPI, state: any): void {
-  const task = state.role === "dev" ? buildDevTask(state) : buildQaTask(state);
-  writeTaskFile(state.role, task);
-  syncTaskFileMtime(state.role);
+function reinjectTask(pi: ExtensionAPI, state: WorkflowState): void {
+  const role = state.role;
+  const task = role === "dev" ? buildDevTask(state) : buildQaTask(state);
+  const step = getCurrentStep(state);
+  const reason = `No required [${step.scoreTag}:N] score detected for ${step.id}.`;
 
-  // Add specific failure reason to the reinjected message
-  let reason = "";
-  if (state.phase === "plan") {
-    if (state.role === "dev")
-      reason = "No `[DEVSCORE:N]` score detected in your plan";
-    else if (state.role === "qa")
-      reason = "No `[QA_SCORE:N]` score detected in your review";
-  } else {
-    const lastMsg = state.context?.lastAgentMessage || "your response";
-    reason = `Score threshold not met in ${lastMsg.substring(0, 150)}...`;
-  }
+  writeTaskFile(role, task);
+  syncTaskFileMtime(role);
 
   pi.sendUserMessage(
-    `⚠️ The previous turn unsuccessfully completed.\n\n${reason}.\n\nHere's your task again:\n\n${task}`,
+    `⚠️ The previous turn unsuccessfully completed.\n\n${reason}\n\nHere's your task again:\n\n${task}`,
     { deliverAs: "followUp" },
   );
-}
-
-function getSubtaskOrder(): string[] | null {
-  const path = join(process.cwd(), ".pworkflow", "task-order.json");
-  if (!existsSync(path)) return null;
-  try {
-    const data = readFileSync(path, "utf-8");
-    return JSON.parse(data);
-  } catch {
-    return null;
-  }
-}
-
-function writeTaskFile(role: string, task: string): void {
-  const path = join(process.cwd(), ".pworkflow", `task-${role}.json`);
-  const payload = { task, assignedAt: Date.now() };
-  try {
-    writeFileSync(path, JSON.stringify(payload, null, 2));
-  } catch (e) {
-    debugLog(`[session] failed to write task file ${path}: ${e}`);
-  }
 }

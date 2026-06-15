@@ -4,7 +4,7 @@
 // to advance the workflow. Prevents empty/question-only output from
 // burning workflow steps.
 
-import { readState, writeState, WorkflowState, Role, getRoleModel } from "./workflow";
+import { readState, writeState, WorkflowState, WorkflowRole, getRoleModel } from "./workflow";
 import { debugLog } from "./logger";
 
 export type QualifierVerdict = "pass" | "reject";
@@ -34,7 +34,7 @@ function getQualifierConfig(): Required<QualifierConfig> {
 
 const DEV_JUDGE_PROMPT = `You are a strict workflow quality gate. Your job is to reject outputs that are not substantive work.
 
-Given a dev's plan phase output, determine if it contains actual work or is essentially empty.
+Given a dev's current workflow step output, determine if it contains actual work or is essentially empty.
 
 Respond with one word only: PASS or REJECT.
 
@@ -45,7 +45,7 @@ REJECT = output is empty, too brief (just a few words like "ok" or "done") to be
 
 const QA_JUDGE_PROMPT = `You are a strict workflow quality gate. Your job is to reject outputs that are not substantive review work.
 
-Given a QA reviewer's output for any phase (plan review, build review, or release confirmation), determine if it contains actual review work or is just a placeholder.
+Given a QA reviewer's output for any workflow step, determine if it contains actual review work or is just a placeholder.
 
 Respond with one word only: PASS or REJECT.
 
@@ -60,7 +60,7 @@ REJECT = output is too brief (just "looks good", "approved" without reasoning), 
  * Returns "pass" or "reject".
  */
 export async function judgeOutput(
-  role: Role,
+  role: WorkflowRole,
   output: string,
 ): Promise<JudgeResult> {
   // Heuristic pre-check: long output is always substantive enough

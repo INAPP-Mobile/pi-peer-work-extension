@@ -2,7 +2,7 @@
  * Compact handler - prepares session compaction with workflow-aware summary
  *
  * Strategy:
- * 1. Build a minimal 3-line summary containing role, phase, goal
+ * 1. Build a minimal workflow continuation summary containing current step, role, and goal
  * 2. Set firstKeptEntryId to the last valid cut point so only summary is kept
  * 3. Agent picks up after compact via task file, not conversation history
  */
@@ -22,7 +22,8 @@ export function initCompact(pi: ExtensionAPI): void {
     }
 
     const summary = `Workflow continuation:
-Phase: ${state.phase}
+Step: ${state.currentStepId}
+Role: ${state.role}
 Goal: ${state.context.humanGoal.substring(0, 200)}`;
 
     // Walk backwards through branch entries to find the last valid cut point

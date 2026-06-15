@@ -4,10 +4,10 @@
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
-import { Role } from "./workflow";
+import { WorkflowRole } from "./workflow";
 
 /** Detect role from PWORKFLOW_ROLE or WORKFLOW_ROLE env vars. */
-export function detectRole(): Role | null {
+export function detectRole(): WorkflowRole | null {
   const envRole = process.env.PWORKFLOW_ROLE;
   if (envRole === "dev" || envRole === "qa") return envRole;
   return null;
@@ -75,7 +75,7 @@ export function buildFooter(
     model?: any;
     cwd: string;
   },
-  getRole: () => Role | null,
+  getRole: () => WorkflowRole | null,
 ) {
   return (tui: any, theme: any, footerData: any) => {
     const unsub = footerData.onBranchChange(() => tui.requestRender());

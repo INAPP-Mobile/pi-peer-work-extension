@@ -27,7 +27,7 @@
     ]
   },
   "scripts": {
-    "build": "tsc && node ./scripts/fix-esm-imports.cjs",
+    "build": "tsc --noEmit",
     "test": "node --test test/*.test.js"
   },
   "peerDependencies": {
